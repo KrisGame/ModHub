@@ -1,0 +1,22 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "ModHub",
+  "outputfilename": "modhub",
+  "frontend:dir": "../frontend",
+  "frontend:install": "npm install --no-audit --no-fund",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "assetdir": "webdist",
+  "wailsjsdir": "../frontend/src",
+  "author": {
+    "name": "ModHub"
+  },
+  "info": {
+    "companyName": "ModHub",
+    "productName": "ModHub",
+    "productVersion": "0.3.0",
+    "copyright": "ModHub",
+    "comments": "ModHub — Modrinth & CurseForge Desktop Manager"
+  }
+}

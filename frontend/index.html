@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ModHub — Modrinth + CurseForge в одном месте</title>
+    <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("modhub_theme_v1");
+          if (t !== "light" && t !== "dark") {
+            t = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+          }
+          document.documentElement.setAttribute("data-theme", t);
+          var a = localStorage.getItem("modhub_accent_v1") || "mono";
+          if (["mono", "graphite", "emerald", "amber", "indigo"].indexOf(a) === -1) a = "mono";
+          document.documentElement.setAttribute("data-accent", a);
+          var bg = localStorage.getItem("modhub_bg_v1") || "dots";
+          if (["dots", "grid", "noise", "clean"].indexOf(bg) === -1) bg = "dots";
+          document.documentElement.setAttribute("data-bg", bg);
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "dark");
+          document.documentElement.setAttribute("data-accent", "mono");
+          document.documentElement.setAttribute("data-bg", "dots");
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

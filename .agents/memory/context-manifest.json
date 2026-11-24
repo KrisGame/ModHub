@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "excludeDirs": [
+    "node_modules",
+    "dist",
+    "webdist",
+    ".modhub-dev",
+    ".git",
+    "bin"
+  ],
+  "alwaysReadMemory": [
+    ".agents/memory/architecture-map.md",
+    ".agents/memory/session-state.md"
+  ],
+  "domains": {
+    "architecture": [
+      "backend/main.go",
+      "backend/internal/app/container.go",
+      "backend/internal/httpapi/router.go",
+      "frontend/src/App.tsx",
+      "frontend/src/services/bridge.ts"
+    ],
+    "catalog": [
+      "backend/internal/catalog/searchengine.go",
+      "backend/internal/catalog/merger.go",
+      "backend/internal/catalog/modrinth.go",
+      "backend/internal/catalog/curseforge.go",
+      "backend/internal/catalog/installed.go",
+      "frontend/src/components/ModCard.tsx",
+      "frontend/src/components/VirtualizedResults.tsx"
+    ],
+    "mods": [
+      "backend/internal/instances/mods.go",
+      "backend/internal/instances/content.go",
+      "backend/internal/deps/engine.go",
+      "backend/internal/deps/quickdownload.go",
+      "frontend/src/utils/profileModInstall.ts",
+      "frontend/src/components/InstallToProfileModal.tsx",
+      "frontend/src/components/ModModal.tsx"
+    ],
+    "instances": [
+      "backend/internal/instances/manager.go",
+      "backend/internal/instances/types.go",
+      "backend/internal/mcversion/installer.go",
+      "backend/internal/modloader/manager.go",
+      "frontend/src/pages/InstancesPage.tsx",
+      "frontend/src/hooks/useInstances.ts",
+      "frontend/src/components/InstallVersionWizard.tsx"
+    ],
+    "accounts": [
+      "backend/internal/accounts/oauth.go",
+      "backend/internal/accounts/xbox_mc.go",
+      "backend/internal/accounts/manager.go",
+      "backend/internal/accounts/vault.go",
+      "frontend/src/pages/AccountsPage.tsx",
+      "frontend/src/hooks/useAccounts.ts"
+    ],
+    "launcher": [
+      "backend/internal/launcher/manager.go",
+      "backend/internal/launcher/args.go",
+      "backend/internal/launcher/crash_analyzer.go",
+      "backend/internal/launcher/logs.go",
+      "backend/internal/runtime/manager.go",
+      "frontend/src/hooks/useLauncher.ts",
+      "frontend/src/components/InstanceConsoleTab.tsx"
+    ],
+    "downloads": [
+      "backend/internal/downloads/manager.go",
+      "backend/internal/downloads/types.go",
+      "backend/internal/netx/urlsecurity.go",
+      "frontend/src/pages/DownloadsPage.tsx",
+      "frontend/src/hooks/useDownloads.ts"
+    ],
+    "modpacks": [
+      "backend/internal/modpacks/manager.go",
+      "backend/internal/modpacks/formats.go",
+      "backend/internal/modpacks/security.go",
+      "backend/internal/packio/packbuilder.go",
+      "frontend/src/hooks/useModpacks.ts",
+      "frontend/src/components/ImportModpackWizard.tsx"
+    ],
+    "runtime": [
+      "backend/internal/runtime/manager.go",
+      "backend/internal/runtime/compat.go",
+      "backend/internal/runtime/detector_windows.go",
+      "backend/internal/runtime/mojang_manifest.go",
+      "frontend/src/components/JavaSettingsSection.tsx"
+    ],
+    "ui": [
+      "frontend/src/styles/variables.css",
+      "frontend/src/styles/layout.css",
+      "frontend/src/styles/components.css",
+      "frontend/src/styles/desktop-shell.css",
+      "frontend/src/components/TitleBar.tsx",
+      "frontend/src/components/Topbar.tsx",
+      "frontend/src/components/AppNavRail.tsx"
+    ],
+    "security": [
+      "backend/internal/httpapi/middleware.go",
+      "backend/internal/security/sanitize.go",
+      "backend/internal/security/secret_windows.go",
+      "backend/internal/netx/urlsecurity.go",
+      "backend/internal/modpacks/security.go",
+      "backend/internal/accounts/oauth.go",
+      "backend/internal/accounts/vault.go"
+    ],
+    "storage": [
+      "backend/internal/storage/db.go",
+      "backend/internal/storage/migrations.go",
+      "backend/internal/storage/atomic.go",
+      "backend/internal/settings/store.go"
+    ]
+  }
+}

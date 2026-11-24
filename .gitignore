@@ -1,0 +1,42 @@
+# Runtime user data, credentials, keys, and SQLite databases (CRITICAL: never commit)
+data/
+.env
+.env.*
+*.key
+*.pem
+*.pfx
+*.p12
+*.db
+*.db-shm
+*.db-wal
+*.mhpart
+
+# Frontend dependencies & build outputs
+node_modules/
+frontend/dist/
+backend/webdist/
+.vite/
+*.tsbuildinfo
+
+# Go / Wails compiled binaries & test outputs
+modhub.exe
+*.exe
+*.dll
+*.syso
+*.test
+coverage.out
+backend/build/bin/
+
+# Local Antigravity dev checkpoints & generated map cache
+.modhub-dev/
+
+# Temporary files, logs, OS & IDE metadata
+*.tmp
+*.bak
+*.orig
+*.log
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
