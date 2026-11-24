@@ -2,6 +2,7 @@ package deps
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -91,10 +92,35 @@ var modIDLookupHints = map[string][]string{
 	"collective":       {"collective", "Collective"},
 	"caelus":           {"caelus", "Caelus API"},
 	"smartbrainlib":    {"smartbrainlib", "SmartBrainLib"},
-	"resourcefullib":   {"resourceful-lib", "Resourceful Lib"},
-	"terrablender":     {"terrablender", "TerraBlender"},
-	"flywheel":         {"flywheel", "Flywheel"},
-	"create":           {"create", "Create"},
+	"resourcefullib":         {"resourceful-lib", "Resourceful Lib"},
+	"terrablender":           {"terrablender", "TerraBlender"},
+	"flywheel":               {"flywheel", "Flywheel"},
+	"create":                 {"create", "Create"},
+	"cardinal-components-api": {"cardinal-components-api", "Cardinal Components API"},
+	"fabric-permissions-api": {"fabric-permissions-api", "fabric-permissions-api"},
+	"yet_another_config_lib_v3": {"yacl", "YetAnotherConfigLib"},
+	"yet-another-config-lib": {"yacl", "YetAnotherConfigLib"},
+	"yacl":                   {"yacl", "YetAnotherConfigLib"},
+	"fzzy_config":            {"fzzy-config", "Fzzy Config"},
+	"midnightlib":            {"midnightlib", "MidnightLib"},
+	"owo":                    {"owo-lib", "oωo (owo-lib)"},
+	"owo-lib":                {"owo-lib", "oωo (owo-lib)"},
+	"forgeconfigapiport":     {"forge-config-api-port", "Forge Config API Port"},
+	"supermartijn642configlib": {"supermartijn642s-config-lib", "SuperMartijn642's Config Lib"},
+	"supermartijn642corelib": {"supermartijn642s-core-lib", "SuperMartijn642's Core Lib"},
+	"glitchcore":             {"glitchcore", "GlitchCore"},
+	"cupboard":               {"cupboard", "Cupboard"},
+	"cucumber":               {"cucumber", "Cucumber Library"},
+	"placebo":                {"placebo", "Placebo"},
+	"octolib":                {"octolib", "OctoLib"},
+	"libraryferret":          {"library-ferret", "Library Ferret"},
+	"entityculling":          {"entityculling", "Entity Culling"},
+	"ferritecore":            {"ferritecore", "FerriteCore"},
+	"coroutil":               {"coroutil", "CoroUtil"},
+	"iceberg":                {"iceberg", "Iceberg"},
+	"prism":                  {"prism-lib", "Prism"},
+	"fusion":                 {"fusion-connected-textures", "Fusion (Connected Textures)"},
+	"cloth-config2":          {"cloth-config", "Cloth Config API"},
 }
 
 func isBuiltinRuntimeID(modID string) bool {
@@ -105,12 +131,23 @@ func isBuiltinRuntimeID(modID string) bool {
 	if _, ok := builtinRuntimeModIDs[low]; ok {
 		return true
 	}
-	// Fabric API sub-modules (fabric-api-base, fabric-networking-api-v1, etc.) map to fabric-api
-	return strings.HasPrefix(low, "org_jetbrains") || strings.HasPrefix(low, "com_google_")
+	return strings.HasPrefix(low, "org_jetbrains") ||
+		strings.HasPrefix(low, "com_google_") ||
+		strings.HasPrefix(low, "org_spongepowered") ||
+		strings.HasPrefix(low, "io_github_")
 }
 
 func canonicalizeManifestModID(raw string) string {
 	low := strings.ToLower(strings.TrimSpace(raw))
+	if low == "cloth-config2" {
+		return "cloth-config"
+	}
+	if strings.HasPrefix(low, "cardinal-components-") {
+		return "cardinal-components-api"
+	}
+	if strings.HasPrefix(low, "fabric-permissions-api") {
+		return "fabric-permissions-api"
+	}
 	if strings.HasPrefix(low, "fabric-") && low != "fabric-api" && low != "fabric-language-kotlin" && low != "fabric-loader" {
 		// Individual Fabric API modules (e.g. fabric-lifecycle-events-v1) are part of Fabric API
 		if strings.HasSuffix(low, "-v0") || strings.HasSuffix(low, "-v1") || strings.HasSuffix(low, "-v2") || strings.HasSuffix(low, "-v3") || low == "fabric-api-base" {
@@ -369,6 +406,7 @@ func ExtractManifestDepsFromJARFile(jarPath string) []ManifestDep {
 	}
 
 	var out []ManifestDep
+	bundledIDs := map[string]struct{}{}
 	seen := map[string]int{}
 	merge := func(list []ManifestDep) {
 		for _, d := range list {
@@ -383,6 +421,64 @@ func ExtractManifestDepsFromJARFile(jarPath string) []ManifestDep {
 		}
 	}
 
+	readSelfIDsFromEmbeddedJar := func(rawJar []byte) {
+		if len(rawJar) == 0 {
+			return
+		}
+		iz, err := zip.NewReader(bytes.NewReader(rawJar), int64(len(rawJar)))
+		if err != nil {
+			return
+		}
+		for _, ef := range iz.File {
+			el := strings.ToLower(strings.ReplaceAll(strings.TrimPrefix(ef.Name, "/"), "\\", "/"))
+			switch el {
+			case "fabric.mod.json":
+				if b, ok := readEntry(ef); ok {
+					var p struct {
+						ID string `json:"id"`
+					}
+					if json.Unmarshal(b, &p) == nil && p.ID != "" {
+						bundledIDs[canonicalizeManifestModID(p.ID)] = struct{}{}
+						bundledIDs[strings.ToLower(strings.TrimSpace(p.ID))] = struct{}{}
+					}
+				}
+			case "quilt.mod.json":
+				if b, ok := readEntry(ef); ok {
+					var p struct {
+						QuiltLoader struct {
+							ID string `json:"id"`
+						} `json:"quilt_loader"`
+					}
+					if json.Unmarshal(b, &p) == nil && p.QuiltLoader.ID != "" {
+						bundledIDs[canonicalizeManifestModID(p.QuiltLoader.ID)] = struct{}{}
+						bundledIDs[strings.ToLower(strings.TrimSpace(p.QuiltLoader.ID))] = struct{}{}
+					}
+				}
+			case "meta-inf/neoforge.mods.toml", "meta-inf/mods.toml":
+				if b, ok := readEntry(ef); ok {
+					inMod := false
+					for _, rawLine := range strings.Split(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n") {
+						line := stripTomlComment(rawLine)
+						if strings.HasPrefix(line, "[") {
+							inMod = reTomlModSection.MatchString(line)
+							continue
+						}
+						if inMod {
+							if m := reTomlKV.FindStringSubmatch(line); len(m) == 3 && strings.EqualFold(strings.TrimSpace(m[1]), "modid") {
+								id := strings.ToLower(strings.TrimSpace(unquoteTomlValue(m[2])))
+								if id != "" {
+									bundledIDs[canonicalizeManifestModID(id)] = struct{}{}
+									bundledIDs[id] = struct{}{}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	embeddedCount := 0
 	for _, f := range zr.File {
 		name := strings.ReplaceAll(strings.TrimPrefix(f.Name, "/"), "\\", "/")
 		low := strings.ToLower(name)
@@ -399,7 +495,29 @@ func ExtractManifestDepsFromJARFile(jarPath string) []ManifestDep {
 			if b, ok := readEntry(f); ok {
 				merge(ParseQuiltModJSONDeps(b, name))
 			}
+		default:
+			if embeddedCount < 32 && strings.HasSuffix(low, ".jar") &&
+				(strings.HasPrefix(low, "meta-inf/jars/") || strings.HasPrefix(low, "meta-inf/jarjar/")) &&
+				f.UncompressedSize64 <= 2*1024*1024 {
+				embeddedCount++
+				if rc, err := f.Open(); err == nil {
+					if rawJar, rErr := io.ReadAll(io.LimitReader(rc, 2*1024*1024)); rErr == nil {
+						readSelfIDsFromEmbeddedJar(rawJar)
+					}
+					_ = rc.Close()
+				}
+			}
 		}
+	}
+	if len(bundledIDs) > 0 && len(out) > 0 {
+		filtered := out[:0]
+		for _, d := range out {
+			if _, bundled := bundledIDs[strings.ToLower(d.ModID)]; bundled {
+				continue
+			}
+			filtered = append(filtered, d)
+		}
+		out = filtered
 	}
 	return out
 }

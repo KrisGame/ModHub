@@ -46,7 +46,6 @@ export const Topbar: React.FC<TopbarProps> = React.memo(({
   onOpenAbout,
 }) => {
   const navRef = useRef<HTMLElement | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const searchWrapRef = useRef<HTMLDivElement | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);

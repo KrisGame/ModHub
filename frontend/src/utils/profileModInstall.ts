@@ -8,6 +8,7 @@ export interface InstallProfileModOptions {
   mcVersion: string;
   loader: string;
   body?: string;
+  onToast?: (msg: string, type: "ok" | "err" | "info") => void;
 }
 
 export interface InstallProfileModResult {
@@ -287,6 +288,7 @@ export async function autoInstallModIntoInstance(options: AutoInstallOptions): P
     mcVersion: instance.mc_version,
     loader: instance.instance_type,
     body: options.body,
+    onToast: options.onToast,
   });
 }
 
@@ -317,7 +319,7 @@ export async function installModWithDependencies(options: InstallProfileModOptio
   const installed = await api.listInstanceMods(target.id);
   const existingNames = new Set(installed.flatMap((mod) => [mod.filename.toLowerCase(), mod.filename.toLowerCase().replace(/\.disabled$/, "")]));
   const required = (file.dependencies || []).filter((dep) => dep.type === "required" && (dep.project_id || dep.version_id));
-  const shouldResolve = Boolean(file.download_url && file.download_url.toLowerCase().includes(".jar"));
+  const shouldResolve = Boolean(file.download_url && (file.filename || file.download_url).toLowerCase().includes(".jar"));
   let dependencies: InstallableFile[] = [];
 
   if (shouldResolve) {
@@ -360,10 +362,13 @@ export async function installModWithDependencies(options: InstallProfileModOptio
       });
     }
     const unresolved = finalResult.unresolved || [];
-    const resolverErrors = Object.values(finalResult.errors || {}).filter(Boolean);
-    if (unresolved.length || resolverErrors.length || finalResult.status === "error") {
-      const reasons = [...unresolved.map((dep) => dep.reason || dep.mod_id), ...resolverErrors];
-      throw new Error(`Не удалось разрешить обязательные зависимости: ${reasons.join("; ") || "ошибка поиска"}`);
+    const blockingErrors = Object.values(finalResult.errors || {}).filter(Boolean);
+    if (finalResult.status === "error" && unresolved.length === 0 && blockingErrors.length > 0) {
+      throw new Error(`Не удалось проверить зависимости: ${blockingErrors.join("; ")}`);
+    }
+    if (unresolved.length > 0 || blockingErrors.length > 0) {
+      const notes = [...unresolved.map((dep) => `${dep.mod_id}: ${dep.reason || "не найдена"}`), ...blockingErrors];
+      options.onToast?.(`Часть зависимостей не удалось скачать автоматически: ${notes.join("; ")}`, "info");
     }
     dependencies = (finalResult.resolved || []).map(cartItemToInstallableFile);
   }
@@ -393,11 +398,28 @@ export async function installModWithDependencies(options: InstallProfileModOptio
   }
   const inputs = [...unique.values()];
   let queued = 0;
+  let skippedDeps = 0;
+  const mainFilename = main.filename.toLowerCase();
   try {
-    // Queue dependencies first so a rejected dependency request cannot leave the main mod queued alone.
+    // Queue dependencies first so a failed dependency doesn't crash before main mod unless critical.
     for (const input of [...inputs.slice(1), inputs[0]]) {
-      await api.installInstanceMod(input);
-      queued++;
+      const isMain = input.filename.toLowerCase() === mainFilename;
+      try {
+        await api.installInstanceMod(input);
+        queued++;
+      } catch (depErr) {
+        const msg = depErr instanceof Error ? depErr.message : String(depErr);
+        const low = msg.toLowerCase();
+        if (!isMain && (low.includes("уже установлен") || low.includes("уже выполняется загрузка"))) {
+          skippedDeps++;
+          continue;
+        }
+        if (!isMain) {
+          options.onToast?.(`Зависимость «${input.title || input.filename}» не скачалась: ${msg}`, "info");
+          continue;
+        }
+        throw depErr;
+      }
     }
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
@@ -405,7 +427,7 @@ export async function installModWithDependencies(options: InstallProfileModOptio
   }
   return {
     queued,
-    dependencies: queued - 1,
-    alreadyInstalled: candidates.length - unique.size,
+    dependencies: Math.max(0, queued - 1),
+    alreadyInstalled: (candidates.length - unique.size) + skippedDeps,
   };
 }

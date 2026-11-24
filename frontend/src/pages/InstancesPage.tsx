@@ -119,11 +119,6 @@ function typeLabel(t: InstanceType): string {
   }
 }
 
-function formatUnixDate(ts: number): string {
-  if (!ts || ts <= 0) return "Никогда";
-  return formatDate(new Date(ts * 1000).toISOString());
-}
-
 export const InstancesPage: React.FC<InstancesPageProps> = ({
   instances,
   paths,
@@ -1161,11 +1156,6 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
                 <button type="button" className="btn btn-primary btn-xs" onClick={() => { onArmModInstall(selected); onNavigate("catalog"); }}>
                   Установить из каталога
                 </button>
-                {desktopBridge.isDesktop() && (
-                  <button type="button" className="btn btn-ghost btn-xs" onClick={() => handleOpenDir(selected.id, "mods")}>
-                    Открыть папку mods
-                  </button>
-                )}
               </div>
             </div>
 
@@ -1277,10 +1267,6 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
             ) : (
               <div className="mh-panel-empty">
                 В папке <code>minecraft/mods/</code> пока нет файлов модов.
-                <div className="mh-placeholder-actions">
-                  <button type="button" className="btn btn-primary btn-sm" onClick={() => { onArmModInstall(selected); onNavigate("catalog"); }}>Установить из каталога</button>
-                  {desktopBridge.isDesktop() && <button type="button" className="btn btn-ghost btn-sm" onClick={() => handleOpenDir(selected.id, "mods")}>Открыть папку mods</button>}
-                </div>
               </div>
             )}
           </section>
@@ -1347,10 +1333,11 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
             ) : (
               <div className="mh-panel-empty">
                 В папке <code>minecraft/resourcepacks/</code> пока нет файлов ресурспаков.
-                <div className="mh-placeholder-actions">
-                  <button type="button" className="btn btn-primary btn-sm" onClick={() => { onArmModInstall(selected); onNavigate("catalog"); }}>Установить из каталога</button>
-                  {desktopBridge.isDesktop() && <button type="button" className="btn btn-ghost btn-sm" onClick={() => handleOpenDir(selected.id, "resourcepacks")}>Открыть папку resourcepacks</button>}
-                </div>
+                {desktopBridge.isDesktop() && (
+                  <div className="mh-placeholder-actions">
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => handleOpenDir(selected.id, "resourcepacks")}>Открыть папку resourcepacks</button>
+                  </div>
+                )}
               </div>
             )}
           </section>
@@ -1408,10 +1395,11 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
             ) : (
               <div className="mh-panel-empty">
                 В папке <code>minecraft/shaderpacks/</code> пока нет файлов шейдерпаков.
-                <div className="mh-placeholder-actions">
-                  <button type="button" className="btn btn-primary btn-sm" onClick={() => { onArmModInstall(selected); onNavigate("catalog"); }}>Установить из каталога</button>
-                  {desktopBridge.isDesktop() && <button type="button" className="btn btn-ghost btn-sm" onClick={() => handleOpenDir(selected.id, "shaderpacks")}>Открыть папку shaderpacks</button>}
-                </div>
+                {desktopBridge.isDesktop() && (
+                  <div className="mh-placeholder-actions">
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => handleOpenDir(selected.id, "shaderpacks")}>Открыть папку shaderpacks</button>
+                  </div>
+                )}
               </div>
             )}
           </section>

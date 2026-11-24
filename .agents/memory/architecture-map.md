@@ -35,7 +35,7 @@
 | `events` | In-process pub/sub event bus (`bus.go`) pushed to Wails/SSE | `bus.go` |
 
 ## Frontend Map (`frontend/src/`)
-- **Pages (`pages/`)**: `HomePage.tsx`, `InstancesPage.tsx`, `DownloadsPage.tsx`, `AccountsPage.tsx`, `SettingsPage.tsx`, `PacksPage.tsx`
-- **Services & Hooks**: `services/bridge.ts`, `api.ts`, `types.ts`, `hooks/useAccounts.ts`, `useDownloads.ts`, `useInstances.ts`, `useLauncher.ts`, `useModpacks.ts`, `usePackCart.ts`, `useDependencyTree.ts`, `useThemeSettings.ts`
-- **Core UI Components (`components/`)**: `TitleBar.tsx`, `AppNavRail.tsx`, `Topbar.tsx`, `Sidebar.tsx`, `VirtualizedResults.tsx`, `ModCard.tsx`, `ModModal.tsx` (`modmodal/*`), `InstallToProfileModal.tsx`, `InstallVersionWizard.tsx`, `InstanceConsoleTab.tsx`, `InstanceVersionTab.tsx`, `JavaSettingsSection.tsx`, `ImportModpackWizard.tsx`
+- **Pages (`pages/`)**: `HomePage.tsx`, `InstancesPage.tsx`, `DownloadsPage.tsx`, `AccountsPage.tsx`, `SettingsPage.tsx`
+- **Services & Hooks**: `services/bridge.ts`, `api.ts`, `types.ts`, `hooks/useAccounts.ts`, `useDownloads.ts`, `useInstances.ts`, `useLauncher.ts`, `useDependencyTree.ts`, `useThemeSettings.ts`
+- **Core UI Components (`components/`)**: `TitleBar.tsx`, `AppNavRail.tsx`, `Topbar.tsx`, `Sidebar.tsx`, `VirtualizedResults.tsx`, `ModCard.tsx`, `ModModal.tsx` (`modmodal/*`), `InstallToProfileModal.tsx`, `InstallVersionWizard.tsx`, `InstanceConsoleTab.tsx`, `JavaSettingsSection.tsx`, `ImportModpackModal.tsx`
 - **Styles (`styles/`)**: `variables.css`, `layout.css`, `components.css`, `desktop-shell.css`, `index.css`

@@ -8,6 +8,7 @@ ModHub is a hybrid desktop & web Minecraft mod/pack/instance launcher (`backend/
 - **Never ingest heavy/secret paths**: Skip `node_modules/`, `backend/webdist/`, `frontend/dist/`, `.modhub-dev/`, `modhub.exe`, and `data/config.json` (contains runtime settings/keys).
 - **Compact output**: Give concise engineering answers and actionable diffs. Do not repeat file contents back to the user.
 - **Selective verification**: Run `node scripts/dev/smart-check.mjs` after edits for targeted package/type checks; run full tests/builds once before finishing.
+- **Git commit & push**: Once final verification passes cleanly, automatically stage (`git add -A`), commit with a concise message, and push to `origin/main` unless the user specifies otherwise.
 - **Subagent discipline**: Stay single-agent for routine edits (1-3 files). Spawn specialized roles (`.agents/agents/`) only for genuine parallel/isolated tracks (architecture, parallel implementation, independent review/QA).
 - **Session continuity**: At task completion or major milestone, update `.agents/memory/session-state.md` (and `decisions.md` / `known-issues.md` if applicable). Never record API keys, tokens, Client IDs, or credentials in memory/docs.
 

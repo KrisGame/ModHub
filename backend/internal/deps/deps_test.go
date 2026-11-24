@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -167,5 +168,44 @@ func TestUnifiedDepEngineAPIPlusManifestAndRecursiveZIP(t *testing.T) {
 	sum, err := packio.StreamPackZIPWithReport(context.Background(), &zbuf, hc, all)
 	if err != nil || sum.WrittenCount != 3 {
 		t.Fatalf("StreamPackZIPWithReport = (%+v, %v)", sum, err)
+	}
+}
+
+func TestEmbeddedJarInJarIgnoredFromExternalDeps(t *testing.T) {
+	innerJar := makeTestModJAR(t, map[string]string{
+		"fabric.mod.json": `{"id":"bundled-lib","name":"Bundled Lib"}`,
+	})
+	outerFiles := map[string]string{
+		"fabric.mod.json": `{"id":"outer-mod","depends":{"minecraft":"1.21.1","bundled-lib":"*","external-lib":"*"}}`,
+		"META-INF/jars/bundled-lib-1.0.jar": string(innerJar),
+	}
+	outerJar := makeTestModJAR(t, outerFiles)
+	tmpJar := filepath.Join(t.TempDir(), "outer.jar")
+	if err := os.WriteFile(tmpJar, outerJar, 0o600); err != nil {
+		t.Fatalf("write jar: %v", err)
+	}
+	deps := ExtractManifestDepsFromJARFile(tmpJar)
+	if len(deps) != 1 || deps[0].ModID != "external-lib" {
+		t.Fatalf("expected only external-lib after filtering bundled JiJ, got %+v", deps)
+	}
+}
+
+func TestPickBestDependencyVersionCompatLoaderAndDownloadURL(t *testing.T) {
+	vers := []domain.VersionFile{
+		{VersionID: "q1", Loaders: []string{"quilt"}, GameVersions: []string{"1.21.1"}, DownloadURL: "", IsAvailable: false, DatePublished: "2025-05-01T00:00:00Z"},
+		{VersionID: "f1", Loaders: []string{"fabric"}, GameVersions: []string{"1.21.1"}, DownloadURL: "https://cdn.example/f1.jar", IsAvailable: true, ReleaseType: "release", DatePublished: "2025-04-01T00:00:00Z"},
+	}
+	best, reason := domain.PickBestDependencyVersion(vers, "1.21.1", "quilt", true)
+	if best == nil || best.VersionID != "f1" {
+		t.Fatalf("expected fabric downloadable fallback f1 for quilt, got %+v (%s)", best, reason)
+	}
+
+	both := []domain.VersionFile{
+		{VersionID: "unavailable", Loaders: []string{"fabric"}, GameVersions: []string{"1.21.1"}, DownloadURL: "", ReleaseType: "release", DatePublished: "2025-06-01T00:00:00Z"},
+		{VersionID: "available", Loaders: []string{"fabric"}, GameVersions: []string{"1.21.1"}, DownloadURL: "https://cdn.example/ok.jar", ReleaseType: "release", DatePublished: "2025-05-01T00:00:00Z"},
+	}
+	bestAvail, _ := domain.PickBestDependencyVersion(both, "1.21.1", "fabric", true)
+	if bestAvail == nil || bestAvail.VersionID != "available" {
+		t.Fatalf("expected available file with DownloadURL over metadata-only entry, got %+v", bestAvail)
 	}
 }

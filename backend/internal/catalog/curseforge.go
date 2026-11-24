@@ -684,7 +684,16 @@ func ResolveCFDependencyRelease(httpClient *netx.HTTPClient, apiKey, modID, mcVe
 		}
 	}
 	if best == nil {
-		return nil, nil
+		// Return lightweight metadata partial so cross-platform Modrinth fallback knows Title & Slug.
+		return &domain.CartItem{
+			Title:      card.Title,
+			IconURL:    card.IconURL,
+			Platform:   "curseforge",
+			SourceKey:  card.SourceKey,
+			SourceKeys: []string{card.SourceKey},
+			GroupID:    "curseforge:" + modID,
+			Folder:     domain.GetContentTypeMeta(ct).Folder,
+		}, nil
 	}
 
 	var reqChildren []domain.DependencyRef

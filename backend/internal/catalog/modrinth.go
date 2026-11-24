@@ -947,10 +947,23 @@ func ResolveMRDependencyReleasePinned(httpClient *netx.HTTPClient, pid, versionI
 		if len(vers) > 0 {
 			if versionIDHint != "" {
 				for i := range vers {
-					if vers[i].VersionID == versionIDHint && vers[i].IsAvailable {
-						cp := vers[i]
-						best = &cp
-						break
+					v := vers[i]
+					if v.VersionID == versionIDHint && v.IsAvailable && strings.TrimSpace(v.DownloadURL) != "" {
+						loaderOK := !usesLoader || effLoader == "" || len(v.Loaders) == 0
+						if !loaderOK {
+							for _, l := range v.Loaders {
+								fl := strings.ToLower(strings.TrimSpace(l))
+								if fl == effLoader || (effLoader == "quilt" && fl == "fabric") || (effLoader == "neoforge" && fl == "forge") {
+									loaderOK = true
+									break
+								}
+							}
+						}
+						if loaderOK {
+							cp := v
+							best = &cp
+							break
+						}
 					}
 				}
 			}
@@ -967,10 +980,23 @@ func ResolveMRDependencyReleasePinned(httpClient *netx.HTTPClient, pid, versionI
 		if len(vers) > 0 {
 			if versionIDHint != "" {
 				for i := range vers {
-					if vers[i].VersionID == versionIDHint && vers[i].IsAvailable {
-						cp := vers[i]
-						best = &cp
-						break
+					v := vers[i]
+					if v.VersionID == versionIDHint && v.IsAvailable && strings.TrimSpace(v.DownloadURL) != "" {
+						loaderOK := !usesLoader || effLoader == "" || len(v.Loaders) == 0
+						if !loaderOK {
+							for _, l := range v.Loaders {
+								fl := strings.ToLower(strings.TrimSpace(l))
+								if fl == effLoader || (effLoader == "quilt" && fl == "fabric") || (effLoader == "neoforge" && fl == "forge") {
+									loaderOK = true
+									break
+								}
+							}
+						}
+						if loaderOK {
+							cp := v
+							best = &cp
+							break
+						}
 					}
 				}
 			}

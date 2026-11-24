@@ -2,12 +2,10 @@
 
 ## Active Baseline
 - **Project**: ModHub (`d:\modhub`, local Git initialized on `main`)
-- **Toolkit Installed**:
-  - Directory rules: `AGENTS.md`, `backend/AGENTS.md`, `frontend/AGENTS.md`
-  - Memory & maps: `.agents/memory/architecture-map.md`, `context-manifest.json`, `decisions.md`, `known-issues.md`, `session-state.md`
-  - Role specs: `.agents/agents/{architect,developer,reviewer,qa-engineer}.md` + `README.md`
-  - Skills (20 total in `.agents/skills/`): 5 general engineering, 5 ModHub domain, 10 `/slash-command` workflows
-  - QOL scripts: `scripts/dev/{_lib,project-map,context-pack,smart-check,git-checkpoint,change-summary,token-report,cleanup}.mjs`
+- **Last Completed Changes**:
+  - Cleaned profile UI in `InstancesPage.tsx`: removed `Открыть папку mods` buttons and duplicate bottom `Установить из каталога` buttons (kept one per tab).
+  - Hardened dependency resolution & download flow (`domain/helpers.go`, `catalog/modrinth.go`, `catalog/curseforge.go`, `deps/jarmanifest.go`, `deps/engine.go`, `profileModInstall.ts`): Quilt/Fabric & NeoForge/Forge compat fallback, preference for downloadable URLs, Jar-in-Jar self-ID detection, non-blocking warnings for heuristic manifest/text misses, and graceful handling of already-installed/queued deps.
+  - Pruned 10 orphaned frontend files + `UX_AUDIT_V25.md` and removed unused locals (`tsc --noUnusedLocals` clean).
 
 ## Next Recommended Actions When Resuming Any Task
 1. Run `node scripts/dev/context-pack.mjs --task <domain>` for minimal context.

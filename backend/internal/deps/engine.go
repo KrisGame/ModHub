@@ -736,13 +736,7 @@ func ResolveRequiredDepsFull(httpClient *netx.HTTPClient, db *storage.Database, 
 						if !mn.Resolved {
 							if mn.Type == "required" {
 								trace.Logf("Зависимость из манифеста не найдена в каталогах: %s (%s)", mn.ProjectID, mn.ManifestFile)
-								unresolved = append(unresolved, domain.UnresolvedDep{
-									ModID:    mn.ProjectID,
-									Platform: mn.Platform,
-									Type:     "required",
-									Source:   "manifest",
-									Reason:   "Обязательная зависимость из манифеста не найдена в каталогах Modrinth/CurseForge",
-								})
+								warnings = append(warnings, fmt.Sprintf("Зависимость из манифеста «%s» не найдена автоматически — если мод не запустится, установите её вручную", mn.ProjectID))
 								trace.RecordItem(domain.DepInstallItemStatus{
 									ProjectID: mn.ProjectID,
 									Platform:  mn.Platform,
@@ -993,7 +987,7 @@ func ResolveRequiredDepsFull(httpClient *netx.HTTPClient, db *storage.Database, 
 					}
 				}
 
-				if ci == nil {
+				if ci == nil || (ci.Filename == "" && strings.TrimSpace(ci.DownloadURL) == "") {
 					reason := fmt.Sprintf("Не найден совместимый файл для MC %s / %s", req.MCVersion, req.Loader)
 					mu.Lock()
 					unresolved = append(unresolved, domain.UnresolvedDep{

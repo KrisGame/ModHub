@@ -335,6 +335,21 @@ func PickBestDependencyVersion(all []VersionFile, mcVer, loader string, usesLoad
 		}
 		return false
 	}
+	hasCompatLoader := func(v VersionFile) bool {
+		if reqLD == "" || len(v.Loaders) == 0 {
+			return false
+		}
+		for _, l := range v.Loaders {
+			fl := strings.ToLower(strings.TrimSpace(l))
+			if reqLD == "quilt" && fl == "fabric" {
+				return true
+			}
+			if reqLD == "neoforge" && fl == "forge" {
+				return true
+			}
+		}
+		return false
+	}
 	hasExactMC := func(v VersionFile) bool {
 		if reqMC == "" {
 			return true
@@ -370,19 +385,32 @@ func PickBestDependencyVersion(all []VersionFile, mcVer, loader string, usesLoad
 		}
 		return false
 	}
-	pickFrom := func(pool []VersionFile) *VersionFile {
+	pickFrom := func(pool []VersionFile, requireURL bool) *VersionFile {
 		if len(pool) == 0 {
 			return nil
 		}
-		cp := append([]VersionFile(nil), pool...)
+		var cp []VersionFile
+		if requireURL {
+			for _, v := range pool {
+				if strings.TrimSpace(v.DownloadURL) != "" {
+					cp = append(cp, v)
+				}
+			}
+			if len(cp) == 0 {
+				return nil
+			}
+		} else {
+			cp = append([]VersionFile(nil), pool...)
+		}
 		sort.SliceStable(cp, func(i, j int) bool { return CompareVersionRelease(cp[i], cp[j]) })
 		res := cp[0]
 		return &res
 	}
 
-	var exactExact, minorExact, anyMinorExact, untaggedLoaderExactMC, loaderOnly []VersionFile
+	var exactExact, minorExact, anyMinorExact, compatExact, compatMinor, untaggedLoaderExactMC, loaderOnly []VersionFile
 	for _, v := range all {
 		ldOK := hasLoader(v)
+		compatLD := !ldOK && hasCompatLoader(v)
 		mcExact := hasExactMC(v)
 		if ldOK && mcExact {
 			exactExact = append(exactExact, v)
@@ -390,33 +418,43 @@ func PickBestDependencyVersion(all []VersionFile, mcVer, loader string, usesLoad
 			minorExact = append(minorExact, v)
 		} else if ldOK && hasAnySameMinorMC(v) {
 			anyMinorExact = append(anyMinorExact, v)
+		} else if compatLD && mcExact {
+			compatExact = append(compatExact, v)
+		} else if compatLD && (hasSameMinorMC(v) || hasAnySameMinorMC(v)) {
+			compatMinor = append(compatMinor, v)
 		} else if reqLD != "" && len(v.Loaders) == 0 && mcExact {
 			untaggedLoaderExactMC = append(untaggedLoaderExactMC, v)
-		} else if ldOK {
+		} else if ldOK || compatLD {
 			loaderOnly = append(loaderOnly, v)
 		}
 	}
 
-	if v := pickFrom(exactExact); v != nil {
-		return v, "exact_mc_loader"
+	tiers := []struct {
+		pool   []VersionFile
+		reason string
+	}{
+		{exactExact, "exact_mc_loader"},
+		{minorExact, "minor_mc_loader"},
+		{anyMinorExact, "same_branch_mc_loader"},
+		{compatExact, "exact_mc_compat_loader"},
+		{compatMinor, "minor_mc_compat_loader"},
+		{untaggedLoaderExactMC, "exact_mc_untagged_loader"},
 	}
-	if v := pickFrom(minorExact); v != nil {
-		return v, "minor_mc_loader"
-	}
-	if v := pickFrom(anyMinorExact); v != nil {
-		return v, "same_branch_mc_loader"
-	}
-	if v := pickFrom(untaggedLoaderExactMC); v != nil {
-		return v, "exact_mc_untagged_loader"
-	}
-	if reqMC == "" {
-		if v := pickFrom(loaderOnly); v != nil {
-			return v, "loader_only"
+	for _, requireURL := range []bool{true, false} {
+		for _, t := range tiers {
+			if v := pickFrom(t.pool, requireURL); v != nil {
+				return v, t.reason
+			}
 		}
-	}
-	if reqLD == "" && reqMC == "" {
-		if v := pickFrom(all); v != nil {
-			return v, "latest_any"
+		if reqMC == "" {
+			if v := pickFrom(loaderOnly, requireURL); v != nil {
+				return v, "loader_only"
+			}
+		}
+		if reqLD == "" && reqMC == "" {
+			if v := pickFrom(all, requireURL); v != nil {
+				return v, "latest_any"
+			}
 		}
 	}
 	return nil, fmt.Sprintf("нет совместимого файла для MC %s / %s", reqMC, reqLD)

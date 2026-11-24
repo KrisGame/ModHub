@@ -141,6 +141,7 @@ export const ModModal: React.FC<ModModalProps> = ({
         mcVersion: v.game_versions?.includes(activeVersion) ? activeVersion : v.game_versions?.[0] || activeVersion,
         loader: v.loaders?.find((loader) => activeLoadersIn.includes(loader)) || v.loaders?.[0] || activeLoadersIn[0] || "",
         body: ownedDetails?.body || "",
+        onToast,
       });
       onToast?.(`В профиль «${modInstallTarget.name}» добавлено в очередь: ${result.queued} файлов, зависимостей: ${result.dependencies}`, "ok");
     } catch (err) {

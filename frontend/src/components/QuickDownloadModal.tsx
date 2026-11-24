@@ -370,7 +370,7 @@ export const QuickDownloadModal: React.FC<QuickDownloadModalProps> = ({
     setPendingMediumDeps([]);
     setDlPhase("Добавление в профиль…");
     try {
-      const result = await installModWithDependencies({ target: modInstallTarget, project: activeItem, file, mcVersion: selectedMc, loader: selectedLoader, body: projectBody });
+      const result = await installModWithDependencies({ target: modInstallTarget, project: activeItem, file, mcVersion: selectedMc, loader: selectedLoader, body: projectBody, onToast });
       setDlStarted(true);
       onToast(`В профиль «${modInstallTarget.name}» добавлено в очередь: ${result.queued} файлов, зависимостей: ${result.dependencies}`, "ok");
       window.setTimeout(() => { setDlStarted(false); onClose(); }, 700);

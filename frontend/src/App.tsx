@@ -272,7 +272,7 @@ export const App: React.FC = () => {
   // Desktop Shell Navigation, Download Manager & Native App Info
   const [activeSection, setActiveSection] = useState<AppSection>("catalog");
   const [modInstallTarget, setModInstallTarget] = useState<GameInstance | null>(null);
-  const [requestedInstanceSelect, setRequestedInstanceSelect] = useState<{ id: string; nonce: number } | null>(null);
+  const requestedInstanceSelect = null;
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [installToProfileItem, setInstallToProfileItem] = useState<ProjectCard | null>(null);
   const [busyGroupIdSet, setBusyGroupIdSet] = useState<Set<string>>(() => new Set());
@@ -413,7 +413,6 @@ export const App: React.FC = () => {
 
   // O(1) busy lookup indices
   const quickBusySet = busyGroupIdSet;
-  const dlBusySet = useMemo(() => new Set<string>(), []);
 
   // Global background scroll lock whenever ANY overlay is open
   const hasOpenOverlay = Boolean(
@@ -1099,16 +1098,6 @@ export const App: React.FC = () => {
       }
     },
     [applyMergedItemUpdate]
-  );
-
-  const openQuickDownloadPicker = useCallback(
-    async (item: ProjectCard) => {
-      const resolved = await resolveBeforeOpen(item);
-      if (!resolved) return;
-      setQuickDownloadDetails(resolved.details);
-      setQuickDownloadItem(resolved.item);
-    },
-    [resolveBeforeOpen]
   );
 
   const activeFiltersCount = useMemo(() => {
