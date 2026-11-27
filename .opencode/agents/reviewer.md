@@ -7,7 +7,7 @@ permissions:
     effect: deny
   - action: shell
     resource: "*"
-    effect: ask
+    effect: allow
 ---
 
 Read and follow `.agents/agents/reviewer.md`. Use shell for inspection and verification only; do not edit project files or commit changes.

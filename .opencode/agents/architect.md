@@ -7,7 +7,7 @@ permissions:
     effect: deny
   - action: shell
     resource: "*"
-    effect: ask
+    effect: allow
 ---
 
 Read and follow `.agents/agents/architect.md`. Use shell only for read-only inspection and context gathering; recommend checkpoints and verification rather than creating snapshots or running builds yourself.
