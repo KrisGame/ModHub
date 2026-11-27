@@ -479,6 +479,20 @@
   gap: 2px;
 }
 
+.mh-project-title-button {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: start;
+  cursor: pointer;
+}
+
+.mh-project-title-button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
+}
+
 .card-title {
   font-size: 14.5px;
   font-weight: 600;

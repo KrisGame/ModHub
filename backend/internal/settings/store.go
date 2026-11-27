@@ -2,6 +2,7 @@ package settings
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,17 +32,70 @@ func LoadAppConfig(dataDir string) domain.AppConfig {
 	if cfg.MaxConcurrentDownloads < 1 || cfg.MaxConcurrentDownloads > 32 {
 		cfg.MaxConcurrentDownloads = 4
 	}
-	cfg.CurseForgeAPIKey = security.SanitizeCFKey(security.UnprotectSecret(cfg.CurseForgeAPIKey))
+	cfg.CurseForgeAPIKey = usableCFKey(dataDir, cfg.CurseForgeAPIKey)
 	cfg.ProxyURL = strings.TrimSpace(cfg.ProxyURL)
 	cfg.MicrosoftClientID = strings.TrimSpace(cfg.MicrosoftClientID)
 	return cfg
 }
 
 func SaveAppConfig(dataDir string, cfg domain.AppConfig) error {
+	return saveAppConfig(dataDir, cfg, false)
+}
+
+// SaveAppConfigReplacingKey permits an explicit replacement (including clearing a
+// broken encrypted key). Other settings edits retain unreadable ciphertext.
+func SaveAppConfigReplacingKey(dataDir string, cfg domain.AppConfig) error {
+	return saveAppConfig(dataDir, cfg, true)
+}
+
+func encryptedCFKey(stored string) bool {
+	return strings.HasPrefix(stored, "dpapi:") || strings.HasPrefix(stored, "mh-aesgcm:")
+}
+
+func usableCFKey(dataDir, stored string) string {
+	decoded := security.UnprotectSecretWithDir(dataDir, stored)
+	if encryptedCFKey(stored) && (decoded == "" || decoded == stored || encryptedCFKey(decoded)) {
+		return ""
+	}
+	return security.SanitizeCFKey(decoded)
+}
+
+// HasUnreadableCFKey never exposes the stored secret to callers.
+func HasUnreadableCFKey(dataDir string) bool {
+	raw, err := os.ReadFile(filepath.Join(dataDir, "config.json"))
+	if err != nil {
+		return false
+	}
+	var stored struct {
+		CurseForgeAPIKey string `json:"curseforge_api_key"`
+	}
+	return json.Unmarshal(raw, &stored) == nil && encryptedCFKey(stored.CurseForgeAPIKey) && usableCFKey(dataDir, stored.CurseForgeAPIKey) == ""
+}
+
+func saveAppConfig(dataDir string, cfg domain.AppConfig, replacingKey bool) error {
 	toStore := cfg
-	cleanKey := security.SanitizeCFKey(security.UnprotectSecret(cfg.CurseForgeAPIKey))
-	if cleanKey != "" {
-		toStore.CurseForgeAPIKey = security.ProtectSecret(cleanKey)
+	cleanKey := usableCFKey(dataDir, cfg.CurseForgeAPIKey)
+	if strings.TrimSpace(cfg.CurseForgeAPIKey) != "" && cleanKey == "" {
+		return errors.New("не удалось расшифровать CurseForge API key; исходный config сохранён без изменений")
+	}
+	if !replacingKey && cleanKey == "" && HasUnreadableCFKey(dataDir) {
+		raw, err := os.ReadFile(filepath.Join(dataDir, "config.json"))
+		if err != nil {
+			return err
+		}
+		var stored struct {
+			CurseForgeAPIKey string `json:"curseforge_api_key"`
+		}
+		if err := json.Unmarshal(raw, &stored); err != nil {
+			return err
+		}
+		toStore.CurseForgeAPIKey = stored.CurseForgeAPIKey
+	} else if cleanKey != "" {
+		protected, err := protectConfigSecret(dataDir, cleanKey)
+		if err != nil {
+			return err
+		}
+		toStore.CurseForgeAPIKey = protected
 	} else {
 		toStore.CurseForgeAPIKey = ""
 	}
@@ -50,14 +104,19 @@ func SaveAppConfig(dataDir string, cfg domain.AppConfig) error {
 	return storage.WriteJSONFileAtomic(dataDir, "config.json", toStore, 0o600)
 }
 
+func protectConfigSecret(dataDir, cleanKey string) (string, error) {
+	// MODHUB_DATA_DIR is already the canonical data-dir override in all modes.
+	return security.ProtectSecretWithDir(dataDir, cleanKey)
+}
+
 func ToPublicConfig(cfg domain.AppConfig) domain.PublicConfig {
 	clean := security.SanitizeCFKey(cfg.CurseForgeAPIKey)
 	return domain.PublicConfig{
-		CurseForgeConfigured:  clean != "",
-		CurseForgeKeyMasked:   security.MaskCFKey(clean),
-		MergeThreshold:        cfg.MergeThreshold,
-		ProxyURL:              strings.TrimSpace(cfg.ProxyURL),
-		ProxyDetected:         netx.GetProxyStatus(),
+		CurseForgeConfigured:   clean != "",
+		CurseForgeKeyMasked:    security.MaskCFKey(clean),
+		MergeThreshold:         cfg.MergeThreshold,
+		ProxyURL:               strings.TrimSpace(cfg.ProxyURL),
+		ProxyDetected:          netx.GetProxyStatus(),
 		AutoInstallMediumDeps:  cfg.AutoInstallMediumDeps,
 		MaxConcurrentDownloads: cfg.MaxConcurrentDownloads,
 		MicrosoftConfigured:    strings.TrimSpace(cfg.MicrosoftClientID) != "",

@@ -240,6 +240,7 @@ export interface NetworkCheckResponse {
 
 export interface PublicConfig {
   curseforge_configured: boolean;
+  curseforge_key_unreadable?: boolean;
   curseforge_key_masked: string;
   merge_threshold: number;
   proxy_url?: string;
@@ -545,6 +546,7 @@ export interface ExportWorldResult {
   archive_path: string;
   filename: string;
   size: number;
+  download_url?: string;
 }
 
 export interface ModUpdateInfo {
@@ -1173,7 +1175,11 @@ export interface ExportModpackResult {
   cancelled: boolean;
   format: ModpackFormat;
   output_path?: string;
+  download_url?: string;
   total_files: number;
+  embedded_files: number;
+  linked_files: number;
+  skipped_files: number;
   size_bytes: number;
   warnings?: string[];
 }

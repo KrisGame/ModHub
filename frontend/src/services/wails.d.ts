@@ -96,6 +96,8 @@ export interface DesktopIndexStatus {
   progress: number;
   total_steps: number;
   last_completed: number;
+  last_error?: string;
+  provider_outcomes?: Record<string, string>;
   index_version: number;
   schema_version: number;
   fts5: boolean;

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
-import { subscribeBackendEvents } from "../services/bridge";
+import { desktopBridge, subscribeBackendEvents } from "../services/bridge";
 import { pushToast } from "../toastBus";
 import type {
   CreateInstanceInput,
@@ -27,6 +27,7 @@ export function useInstances() {
   const [instances, setInstances] = useState<GameInstance[]>([]);
   const [paths, setPaths] = useState<SharedStoragePaths | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [activeInstallsById, setActiveInstallsById] = useState<Record<string, InstallProgressInfo>>({});
 
   const refresh = useCallback(async () => {
@@ -34,8 +35,9 @@ export function useInstances() {
       const snap = await api.getInstances();
       setInstances(snap.instances || []);
       if (snap.paths) setPaths(snap.paths);
-    } catch {
-      // Ignore transient startup errors
+      setLoadError("");
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "Не удалось загрузить игровые профили");
     } finally {
       setLoading(false);
     }
@@ -44,6 +46,31 @@ export function useInstances() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const activeInstallIDs = Object.keys(activeInstallsById).sort().join(",");
+  useEffect(() => {
+    if (desktopBridge.isDesktop() || !activeInstallIDs) return;
+    let stopped = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      const ids = activeInstallIDs.split(",");
+      const results = await Promise.allSettled(ids.map((id) => api.getActiveProfileInstall(id)));
+      if (stopped) return;
+      setActiveInstallsById((current) => {
+        const next = { ...current };
+        results.forEach((result, index) => {
+          if (result.status !== "fulfilled" || !next[ids[index]]) return;
+          if (result.value) next[ids[index]] = result.value;
+          else delete next[ids[index]];
+        });
+        return next;
+      });
+      if (results.some((result) => result.status === "fulfilled" && !result.value)) void refresh();
+      timer = window.setTimeout(() => void poll(), 1500);
+    };
+    timer = window.setTimeout(() => void poll(), 1000);
+    return () => { stopped = true; window.clearTimeout(timer); };
+  }, [activeInstallIDs, refresh]);
 
   useEffect(() => {
     return subscribeBackendEvents((ev) => {
@@ -179,6 +206,7 @@ export function useInstances() {
     instances,
     paths,
     loading,
+    loadError,
     activeInstallsById,
     refresh,
     create,

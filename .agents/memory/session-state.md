@@ -3,6 +3,11 @@
 ## Active Baseline
 - **Project**: ModHub (`d:\modhub`, local Git initialized on `main`)
 - **Last Completed Changes**:
+  - Audit remediation: staged modpack updates with rollback and atomic SQLite metadata; browser archive upload and retryable same-origin exports; bounded world export; accessible import/export dialogs, web profile progress, and browser section history. Index status and CurseForge key handling now distinguish errors from successful results.
+  - Fixed the export dialog opening from profile details via a body portal. Verified in Chromium that it opens over the profile, fits a 380px-high area with internal scrolling and visible actions, closes on Escape, and does not appear in the profile list.
+  - Fixed audit findings: ModHub/world exports now download in web mode through constrained same-origin endpoints; temporary files removed after transfer, export formats report/omit unsupported components, and world ZIP generation is bounded and atomic.
+  - Added non-Windows AES-GCM config-secret protection under per-data-dir vault, strict save failure on broken ciphertext, and one-time export download tests. Added Settings UI for index sync and modpack update checks/actions.
+  - Verification: `go test ./...` (85 passed), `go vet ./...`, targeted `smart-check` (Go suites + TS typecheck), and `npm run build` passed. One full frontend build preceded final backend-only secret edge hardening; no frontend code changed after it.
   - Connected the Antigravity toolkit to OpenCode: 4 project subagents and 10 slash commands in `.opencode/`, reusing all 20 skills and the role specs in `.agents/`.
   - Added the `/modhub-task` pipeline: global GPT-6 Luna orchestrator plans and triages; scoped GPT-6 Sol developer implements; project architect/reviewer are Luna, checks are risk-based; no Astra. Global OpenCode config defaults to the ModHub Luna orchestrator.
   - `/modhub-task` is optional: new ModHub sessions use the global Luna orchestrator automatically; pipeline instructions also require ordinary chat requests to follow the same workflow and classify advice-only questions as analysis-only.

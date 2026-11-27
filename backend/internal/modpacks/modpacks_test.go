@@ -218,7 +218,7 @@ func TestExportRoundTripAndUserPreservingUpdate(t *testing.T) {
 		SourceType: "instance", SourceID: inst.ID, Format: FormatModHub, OutputPath: mhOut, Version: "1.0.0",
 		IncludeMods: true, IncludeConfigs: true, IncludeResourcePacks: true, IncludeShaders: true, IncludeDatapacks: true, IncludeExtraFiles: true,
 	})
-	if err != nil || resMH.TotalFiles != 5 {
+	if err != nil || resMH.TotalFiles != 5 || resMH.EmbeddedFiles != 5 || resMH.LinkedFiles != 0 || resMH.SkippedFiles != 0 {
 		t.Fatalf("Export .modhub failed: res=%+v err=%v", resMH, err)
 	}
 	zr, _ := zip.OpenReader(mhOut)

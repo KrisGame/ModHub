@@ -73,6 +73,18 @@ func (m *Manager) Export(ctx context.Context, req ExportModpackRequest) (ExportM
 	if len(cands) == 0 {
 		return ExportModpackResult{}, fmt.Errorf("нет файлов для экспорта — выберите хотя бы одну категорию содержимого")
 	}
+	selectedCount := len(cands)
+	if format != FormatModHub {
+		filtered := cands[:0]
+		for _, c := range cands {
+			if c.category == CatConfig || c.category == CatUserFile || c.category == CatDatapack || c.category == CatMod || c.category == CatAddon || c.category == CatResourcePack || c.category == CatShader {
+				filtered = append(filtered, c)
+			} else {
+				warnings = append(warnings, fmt.Sprintf("%s не поддерживается форматом %s и пропущен", c.relPath, format))
+			}
+		}
+		cands = filtered
+	}
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 		return ExportModpackResult{}, err
 	}
@@ -86,13 +98,14 @@ func (m *Manager) Export(ctx context.Context, req ExportModpackRequest) (ExportM
 	zw := zip.NewWriter(tmpFile)
 	var writeErr error
 	var fmtWarn []string
+	var counts exportCounts
 	switch format {
 	case FormatMRPack:
-		fmtWarn, writeErr = writeMRPackArchive(zw, name, desc, ver, mcVer, loader, loaderVer, cands)
+		fmtWarn, writeErr = writeMRPackArchive(zw, name, desc, ver, mcVer, loader, loaderVer, cands, &counts)
 	case FormatCurseForge:
-		fmtWarn, writeErr = writeCurseForgeArchive(zw, name, author, ver, mcVer, loader, loaderVer, cands)
+		fmtWarn, writeErr = writeCurseForgeArchive(zw, name, author, ver, mcVer, loader, loaderVer, cands, &counts)
 	case FormatModHub:
-		fmtWarn, writeErr = writeModHubArchive(zw, name, author, desc, ver, mcVer, loader, loaderVer, profSettings, cands)
+		fmtWarn, writeErr = writeModHubArchive(zw, name, author, desc, ver, mcVer, loader, loaderVer, profSettings, cands, &counts)
 	}
 	warnings = append(warnings, fmtWarn...)
 	if writeErr != nil {
@@ -104,24 +117,32 @@ func (m *Manager) Export(ctx context.Context, req ExportModpackRequest) (ExportM
 		cleanup()
 		return ExportModpackResult{}, err
 	}
-	_ = tmpFile.Sync()
-	fi, _ := tmpFile.Stat()
-	var sizeBytes int64
-	if fi != nil {
-		sizeBytes = fi.Size()
+	if err := tmpFile.Sync(); err != nil {
+		cleanup()
+		return ExportModpackResult{}, err
+	}
+	fi, err := tmpFile.Stat()
+	if err != nil {
+		cleanup()
+		return ExportModpackResult{}, err
 	}
 	if err := tmpFile.Close(); err != nil {
 		_ = os.Remove(tmpPath)
 		return ExportModpackResult{}, err
 	}
-	_ = os.Remove(outPath)
 	if err := os.Rename(tmpPath, outPath); err != nil {
+		// Windows does not replace an existing file with Rename. Preserve the
+		// previous archive on failure; unique HTTP paths and save-dialog paths
+		// avoid destructive pre-removal.
 		_ = os.Remove(tmpPath)
 		return ExportModpackResult{}, err
 	}
 	_ = ctx
-	return ExportModpackResult{Format: format, OutputPath: outPath, TotalFiles: len(cands), SizeBytes: sizeBytes, Warnings: warnings}, nil
+	total := counts.embedded + counts.linked
+	return ExportModpackResult{Format: format, OutputPath: outPath, TotalFiles: total, EmbeddedFiles: counts.embedded, LinkedFiles: counts.linked, SkippedFiles: selectedCount - total, SizeBytes: fi.Size(), Warnings: warnings}, nil
 }
+
+type exportCounts struct{ embedded, linked int }
 
 func (m *Manager) trackedFilesByInstance(instanceID string) map[string]domain.ModpackFileRecord {
 	out := map[string]domain.ModpackFileRecord{}
@@ -291,7 +312,7 @@ func isAllowedModrinthCDN(rawURL string) bool {
 	return strings.HasPrefix(low, "https://cdn.modrinth.com/") || strings.HasPrefix(low, "https://cdn-raw.modrinth.com/")
 }
 
-func writeMRPackArchive(zw *zip.Writer, name, desc, ver, mcVer, loader, loaderVer string, cands []exportCandidate) ([]string, error) {
+func writeMRPackArchive(zw *zip.Writer, name, desc, ver, mcVer, loader, loaderVer string, cands []exportCandidate, counts *exportCounts) ([]string, error) {
 	deps := map[string]string{}
 	if mcVer != "" {
 		deps["minecraft"] = mcVer
@@ -323,6 +344,7 @@ func writeMRPackArchive(zw *zip.Writer, name, desc, ver, mcVer, loader, loaderVe
 				clientEnv = "optional"
 			}
 			idx.Files = append(idx.Files, ModrinthIndexFile{Path: c.relPath, Hashes: hashes, Env: &ModrinthFileEnv{Client: clientEnv, Server: "optional"}, Downloads: []string{c.downloadURL}, FileSize: c.size})
+			counts.linked++
 			continue
 		}
 		if c.localPath != "" {
@@ -330,8 +352,11 @@ func writeMRPackArchive(zw *zip.Writer, name, desc, ver, mcVer, loader, loaderVe
 				return warnings, err
 			}
 			overrideCount++
+			counts.embedded++
 		} else if c.downloadURL != "" {
 			warnings = append(warnings, fmt.Sprintf("%s не имеет Modrinth CDN URL/хэшей и отсутствует локально — пропущен в .mrpack", c.relPath))
+		} else {
+			warnings = append(warnings, fmt.Sprintf("%s не имеет локального файла или проверенной Modrinth-ссылки — пропущен в .mrpack", c.relPath))
 		}
 	}
 	if overrideCount > 0 {
@@ -340,7 +365,7 @@ func writeMRPackArchive(zw *zip.Writer, name, desc, ver, mcVer, loader, loaderVe
 	return warnings, writeZipJSON(zw, "modrinth.index.json", idx)
 }
 
-func writeCurseForgeArchive(zw *zip.Writer, name, author, ver, mcVer, loader, loaderVer string, cands []exportCandidate) ([]string, error) {
+func writeCurseForgeArchive(zw *zip.Writer, name, author, ver, mcVer, loader, loaderVer string, cands []exportCandidate, counts *exportCounts) ([]string, error) {
 	var loaders []CFManifestLoader
 	if ld := strings.ToLower(strings.TrimSpace(loader)); ld != "" && ld != "vanilla" && ld != "empty" {
 		loaders = append(loaders, CFManifestLoader{ID: ld + "-" + fallbackStr(loaderVer, "latest"), Primary: true})
@@ -353,6 +378,7 @@ func writeCurseForgeArchive(zw *zip.Writer, name, author, ver, mcVer, loader, lo
 		fid, errF := strconv.Atoi(strings.TrimSpace(c.fileID))
 		if strings.EqualFold(c.sourcePlatform, "curseforge") && errP == nil && errF == nil && pid > 0 && fid > 0 {
 			mf.Files = append(mf.Files, CFManifestFile{ProjectID: pid, FileID: fid, Required: !c.optional})
+			counts.linked++
 			continue
 		}
 		if c.localPath != "" {
@@ -362,9 +388,10 @@ func writeCurseForgeArchive(zw *zip.Writer, name, author, ver, mcVer, loader, lo
 			if c.category == CatMod || c.category == CatResourcePack || c.category == CatShader || c.category == CatDatapack {
 				nonCFCount++
 			}
+			counts.embedded++
 		} else {
 			nonCFCount++
-			warnings = append(warnings, fmt.Sprintf("%s не имеет CurseForge projectID/fileID и не скачан локально — пропущен в manifest.json", c.relPath))
+			warnings = append(warnings, fmt.Sprintf("%s не имеет CurseForge projectID/fileID и локальной копии; будет недоступен в экспорте", c.relPath))
 		}
 	}
 	if nonCFCount > 0 {
@@ -373,14 +400,24 @@ func writeCurseForgeArchive(zw *zip.Writer, name, author, ver, mcVer, loader, lo
 	return warnings, writeZipJSON(zw, "manifest.json", mf)
 }
 
-func writeModHubArchive(zw *zip.Writer, name, author, desc, ver, mcVer, loader, loaderVer string, profSettings *ModHubPackProfileParams, cands []exportCandidate) ([]string, error) {
+func writeModHubArchive(zw *zip.Writer, name, author, desc, ver, mcVer, loader, loaderVer string, profSettings *ModHubPackProfileParams, cands []exportCandidate, counts *exportCounts) ([]string, error) {
 	mf := ModHubPackManifest{
 		FormatVersion: ModHubFormatVersionCurrent, Name: name, Author: author, Description: desc, Version: ver,
 		MCVersion: mcVer, Loader: loader, LoaderVersion: loaderVer, CreatedAt: time.Now().Unix(),
 		ProfileSettings: profSettings, Files: make([]ModHubPackFileEntry, 0, len(cands)), Overrides: make([]ModHubPackOverrideEntry, 0),
 	}
+	var warnings []string
 	for _, c := range cands {
-		if c.category == CatConfig || c.category == CatUserFile {
+		isOverride := c.category == CatConfig || c.category == CatUserFile
+		if c.localPath != "" {
+			counts.embedded++
+		} else if !isOverride && c.downloadURL != "" {
+			counts.linked++
+		} else {
+			warnings = append(warnings, fmt.Sprintf("%s отсутствует локально и пропущен", c.relPath))
+			continue
+		}
+		if isOverride {
 			if c.localPath != "" {
 				arcEntry := "overrides/" + c.relPath
 				if err := writeZipLocalFile(zw, arcEntry, c.localPath); err != nil {
@@ -408,7 +445,7 @@ func writeModHubArchive(zw *zip.Writer, name, author, desc, ver, mcVer, loader, 
 		}
 		mf.Files = append(mf.Files, entry)
 	}
-	return nil, writeZipJSON(zw, "modhub.pack.json", mf)
+	return warnings, writeZipJSON(zw, "modhub.pack.json", mf)
 }
 
 func fallbackStr(a, b string) string {

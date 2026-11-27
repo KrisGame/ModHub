@@ -42,9 +42,10 @@ type cachedPreview struct {
 }
 
 type cachedUpdatePlan struct {
-	diff      UpdateDiffPreview
-	newPrev   ImportPreview
-	createdAt time.Time
+	diff            UpdateDiffPreview
+	newPrev         ImportPreview
+	oldManifestHash string
+	createdAt       time.Time
 }
 
 type Manager struct {
@@ -59,6 +60,7 @@ type Manager struct {
 	packLookup instances.PackLookup
 
 	mu          sync.Mutex
+	applyMu     sync.Mutex
 	limits      ArchiveLimits
 	previews    map[string]cachedPreview
 	updatePlans map[string]cachedUpdatePlan
@@ -78,6 +80,24 @@ func NewManager(cacheDir string, httpClient *netx.HTTPClient, dlMgr *downloads.M
 }
 
 func (m *Manager) SetArchiveLimits(lim ArchiveLimits) { m.mu.Lock(); m.limits = lim; m.mu.Unlock() }
+func (m *Manager) RemoveExport(targetPath string) error {
+	exportDir := filepath.Join(filepath.Dir(m.cacheDir), "exports")
+	rel, err := filepath.Rel(exportDir, targetPath)
+	if err != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("путь выходит за каталог экспорта")
+	}
+	if resolved, e := filepath.EvalSymlinks(targetPath); e == nil {
+		base, be := filepath.EvalSymlinks(exportDir)
+		if be == nil {
+			rel, err = filepath.Rel(base, resolved)
+			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return fmt.Errorf("путь выходит за каталог экспорта")
+			}
+		}
+	}
+	return os.Remove(targetPath)
+}
+
 func (m *Manager) Close() {
 	if m != nil {
 		m.closeOnce.Do(func() { m.wg.Wait() })
@@ -406,9 +426,9 @@ func (m *Manager) fetchCurseForgeModpackArchive(ctx context.Context, slugOrID, t
 
 func (m *Manager) ExecuteImportAsync(req ExecuteImportRequest) error {
 	m.mu.Lock()
-	_, ok := m.previews[req.PreviewID]
+	cp, ok := m.previews[req.PreviewID]
 	m.mu.Unlock()
-	if !ok {
+	if !ok || time.Since(cp.createdAt) > 2*time.Hour {
 		return ErrPreviewNotFound
 	}
 	m.wg.Add(1)
@@ -426,7 +446,7 @@ func (m *Manager) ExecuteImportSync(ctx context.Context, req ExecuteImportReques
 	m.mu.Lock()
 	cp, ok := m.previews[req.PreviewID]
 	m.mu.Unlock()
-	if !ok {
+	if !ok || time.Since(cp.createdAt) > 2*time.Hour {
 		return ImportResult{}, ErrPreviewNotFound
 	}
 	prev := cp.preview
@@ -843,144 +863,13 @@ func (m *Manager) PreviewUpdate(ctx context.Context, modpackID, newArchivePath s
 			delete(m.updatePlans, k)
 		}
 	}
-	m.updatePlans[newPrev.PreviewID] = cachedUpdatePlan{diff: diff, newPrev: newPrev, createdAt: time.Now()}
+	m.updatePlans[newPrev.PreviewID] = cachedUpdatePlan{diff: diff, newPrev: newPrev, oldManifestHash: target.ManifestHash, createdAt: time.Now()}
 	m.mu.Unlock()
 	return diff, nil
 }
 
 func (m *Manager) ApplyUpdate(ctx context.Context, req ApplyUpdateRequest) (ModpackView, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	m.mu.Lock()
-	plan, ok := m.updatePlans[req.PreviewID]
-	m.mu.Unlock()
-	if !ok || plan.diff.ModpackID != req.ModpackID {
-		return ModpackView{}, ErrPreviewNotFound
-	}
-	recs, err := m.store.ListModpacks()
-	if err != nil {
-		return ModpackView{}, err
-	}
-	var mpRec *domain.ModpackRecord
-	for i := range recs {
-		if recs[i].ID == req.ModpackID {
-			cp := recs[i]
-			mpRec = &cp
-			break
-		}
-	}
-	if mpRec == nil {
-		return ModpackView{}, ErrModpackNotFound
-	}
-	inst, err := m.instMgr.Get(mpRec.InstanceID)
-	if err != nil {
-		return ModpackView{}, err
-	}
-	conflictMode := req.ConfigConflictMode
-	if conflictMode == "" {
-		conflictMode = ConflictKeepExisting
-	}
-
-	removedCount := 0
-	for _, rem := range plan.diff.Removed {
-		if full, rerr := ResolveSafeDestPath(inst.GameDir, rem.RelPath); rerr == nil && os.Remove(full) == nil {
-			removedCount++
-		}
-	}
-	conflictSet, applySet := map[string]bool{}, map[string]bool{}
-	for _, c := range plan.diff.ConfigConflicts {
-		conflictSet[strings.ToLower(c.RelPath)] = true
-	}
-	for _, a := range plan.diff.Added {
-		applySet[strings.ToLower(a.RelPath)] = true
-	}
-	for _, u := range plan.diff.Updated {
-		applySet[strings.ToLower(u.RelPath)] = true
-	}
-	if conflictMode != ConflictKeepExisting {
-		for k := range conflictSet {
-			applySet[k] = true
-		}
-	}
-
-	var zr *zip.ReadCloser
-	if plan.newPrev.ResolvedArchivePath != "" {
-		zr, _ = zip.OpenReader(plan.newPrev.ResolvedArchivePath)
-		if zr != nil {
-			defer zr.Close()
-		}
-	}
-	zipMap := map[string]*zip.File{}
-	if zr != nil {
-		for _, zf := range zr.File {
-			zipMap[zf.Name] = zf
-		}
-	}
-
-	now := time.Now().Unix()
-	groupID := "mpupdate:" + mpRec.ID
-	newFileRecs := make([]domain.ModpackFileRecord, 0, len(plan.newPrev.Files))
-	for _, nf := range plan.newPrev.Files {
-		if nf.Optional && !nf.SelectedByDefault {
-			continue
-		}
-		low := strings.ToLower(nf.RelPath)
-		destPath, derr := ResolveSafeDestPath(inst.GameDir, nf.RelPath)
-		if derr != nil {
-			continue
-		}
-		if applySet[low] && nf.Available {
-			if conflictSet[low] {
-				_ = backupIfNeeded(destPath, conflictMode)
-			}
-			if nf.SourceKind == "download" && len(nf.DownloadURLs) > 0 && m.dlMgr != nil {
-				algo, chk := downloads.ChecksumNone, ""
-				if nf.SHA256 != "" {
-					algo, chk = downloads.ChecksumSHA256, nf.SHA256
-				} else if nf.SHA1 != "" {
-					algo, chk = downloads.ChecksumSHA1, nf.SHA1
-				}
-				if tv, qerr := m.dlMgr.Enqueue(downloads.DownloadRequest{Name: fallbackStr(nf.Title, nf.Filename), Category: string(nf.Category), URL: nf.DownloadURLs[0], DestPath: destPath, ExpectedSize: nf.Size, ChecksumAlgo: algo, ChecksumValue: chk, GroupID: groupID}); qerr == nil {
-					_, _ = m.dlMgr.Wait(ctx, tv.ID)
-				}
-			} else if zf, exists := zipMap[nf.ArchiveEntry]; exists {
-				_ = extractZipFileBounded(zf, destPath, DefaultMaxSingleEntryBytes)
-			}
-		}
-		hashes, _ := ComputeFileHashes(destPath)
-		dlURL := ""
-		if len(nf.DownloadURLs) > 0 {
-			dlURL = nf.DownloadURLs[0]
-		}
-		newFileRecs = append(newFileRecs, domain.ModpackFileRecord{
-			ModpackID: mpRec.ID, InstanceID: inst.ID, RelPath: nf.RelPath, Category: string(nf.Category),
-			SourcePlatform: nf.SourcePlatform, SourceProjectID: nf.SourceProjectID, SourceFileID: nf.SourceFileID,
-			SHA1: hashes.SHA1, SHA256: hashes.SHA256, SHA512: hashes.SHA512, Size: hashes.Size,
-			Managed: true, Optional: nf.Optional, Enabled: true, DownloadURL: dlURL, UpdatedAt: now,
-		})
-	}
-
-	oldVer := mpRec.Version
-	mpRec.Version = fallbackStr(plan.newPrev.Version, mpRec.Version)
-	mpRec.ManifestHash = plan.newPrev.ManifestHash
-	mpRec.SourceVersionID = fallbackStr(plan.newPrev.SourceVersionID, mpRec.SourceVersionID)
-	mpRec.MCVersion = fallbackStr(plan.newPrev.MCVersion, mpRec.MCVersion)
-	mpRec.Loader = fallbackStr(plan.newPrev.Loader, mpRec.Loader)
-	mpRec.LoaderVersion = fallbackStr(plan.newPrev.LoaderVersion, mpRec.LoaderVersion)
-	mpRec.UpdatedAt = now
-	_ = m.store.UpsertModpack(*mpRec)
-	_ = m.store.ReplaceModpackFiles(mpRec.ID, newFileRecs)
-	_ = m.store.InsertModpackUpdate(domain.ModpackUpdateRecord{
-		ID: genID("mpupd"), ModpackID: mpRec.ID, FromVersion: oldVer, ToVersion: mpRec.Version,
-		AddedCount: len(plan.diff.Added), UpdatedCount: len(plan.diff.Updated), RemovedCount: removedCount, PreservedCount: len(plan.diff.PreservedUser),
-		Status: "completed", Summary: fmt.Sprintf("Добавлено: %d, обновлено: %d, удалено: %d, сохранено пользовательских: %d", len(plan.diff.Added), len(plan.diff.Updated), removedCount, len(plan.diff.PreservedUser)), AppliedAt: now,
-	})
-	view := m.recordToView(*mpRec)
-	if m.bus != nil {
-		m.bus.Publish(events.EventModpackUpdated, view)
-	}
-	return view, nil
+	return m.applyUpdateSafe(ctx, req)
 }
 
 func shouldWriteTarget(destPath, wantSHA1, wantSHA256 string, policy ConflictResolution) bool {

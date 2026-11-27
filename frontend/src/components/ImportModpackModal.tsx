@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { api } from "../api";
 import { CloseIcon } from "../icons";
 import { desktopBridge } from "../services/bridge";
+import { useModalFocus } from "../hooks/useModalFocus";
 import type { ImportPreview } from "../types";
 import { formatBytes } from "../utils";
 
@@ -19,11 +20,14 @@ export const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
   onToast,
 }) => {
   const [archivePath, setArchivePath] = useState("");
+  const [archiveFile, setArchiveFile] = useState<File>();
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [customName, setCustomName] = useState("");
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState("");
+  const busy = importing || loadingPreview;
+  const dialogRef = useModalFocus(open, onClose, busy);
 
   if (!open) return null;
 
@@ -52,10 +56,30 @@ export const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
       const chosen = await api.browseModpackArchive();
       if (chosen && chosen.trim()) {
         setArchivePath(chosen);
-        await loadPreview(chosen);
+        setPreview(null);
+        setError("");
       }
     } catch (err) {
       onToast(err instanceof Error ? err.message : String(err), "err");
+    }
+  };
+
+  const handleUpload = async (file: File | undefined) => {
+    if (!file) return;
+    setLoadingPreview(true);
+    setError("");
+    setPreview(null);
+    try {
+      const prev = await api.uploadModpackArchive(file);
+      setArchivePath(file.name);
+      setPreview(prev);
+      setCustomName(prev.name || file.name);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      onToast(message, "err");
+    } finally {
+      setLoadingPreview(false);
     }
   };
 
@@ -69,7 +93,7 @@ export const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
         install_minecraft: true,
         skip_unavailable: true,
       });
-      onToast(`Сборка «${customName.trim() || preview.name}» успешно создана! Загружаются файлы модов…`, "ok");
+      onToast(`Импорт сборки «${customName.trim() || preview.name}» запущен.`, "info");
       onSuccess(customName.trim() || preview.name);
       onClose();
     } catch (err) {
@@ -93,23 +117,23 @@ export const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
   };
 
   return (
-    <div className="modal-backdrop overlay-animated is-open" role="dialog" aria-modal="true" onClick={onClose}>
-      <div className="modal-window modal-md" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-backdrop overlay-animated is-open" onClick={() => { if (!busy) onClose(); }}>
+      <div ref={dialogRef} role="dialog" aria-modal="true" className="modal-window modal-md" onClick={(e) => e.stopPropagation()} aria-labelledby="modpack-import-title" tabIndex={-1}>
         <div className="modal-header">
           <div>
-            <h2 className="modal-title">Импорт сторонней сборки</h2>
+            <h2 id="modpack-import-title" className="modal-title">Импорт сторонней сборки</h2>
             <p className="modal-subtitle">
               Поддерживаются официальные сборки <strong>Modrinth (.mrpack)</strong>, <strong>CurseForge (.zip)</strong> и <strong>ModHub (.modhub)</strong>.
             </p>
           </div>
-          <button type="button" className="icon-close" aria-label="Закрыть" disabled={importing} onClick={onClose}>
+          <button type="button" className="icon-close" aria-label="Закрыть" disabled={busy} onClick={onClose}>
             <CloseIcon size={15} />
           </button>
         </div>
 
         <div className="modal-body mh-form-stack">
           {/* File Selection */}
-          <div className="mh-form-field">
+          {desktopBridge.isDesktop() && <div className="mh-form-field">
             <label htmlFor="modpackPath">Файл архива сборки</label>
             <div style={{ display: "flex", gap: "8px" }}>
               <input
@@ -119,12 +143,8 @@ export const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
                 style={{ flex: 1 }}
                 placeholder="C:\Users\...\Downloads\Fabulously_Optimized.mrpack"
                 value={archivePath}
-                onChange={(e) => setArchivePath(e.target.value)}
-                onBlur={() => {
-                  if (archivePath && (!preview || preview.source_ref !== archivePath)) {
-                    void loadPreview(archivePath);
-                  }
-                }}
+                disabled={busy}
+                onChange={(e) => { setArchivePath(e.target.value); setPreview(null); setError(""); }}
               />
               {desktopBridge.isDesktop() && (
                 <button
@@ -138,9 +158,25 @@ export const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
               )}
             </div>
             <p className="mh-muted-meta" style={{ marginTop: 4, fontSize: "11px" }}>
-              Выберите файл с диска или вставьте полный путь к файлу .mrpack или .zip.
+              Выберите файл с диска или вставьте полный путь к архиву .mrpack, .zip или .modhub.
             </p>
-          </div>
+          </div>}
+
+          {!desktopBridge.isDesktop() && <div className="mh-form-field" onDragOver={(e) => e.preventDefault()} onDrop={(e) => {
+            e.preventDefault();
+            if (busy || !e.dataTransfer.files[0]) return;
+            setArchiveFile(e.dataTransfer.files[0]);
+            setPreview(null);
+            setError("");
+          }}>
+            <label htmlFor="modpackArchiveUpload">Выберите или перетащите архив (.mrpack, .zip, .modhub)</label>
+            <input id="modpackArchiveUpload" type="file" accept=".mrpack,.zip,.modhub" disabled={busy} onChange={(e) => { setArchiveFile(e.target.files?.[0]); setPreview(null); setError(""); }} />
+            {archiveFile && <span>{archiveFile.name}</span>}
+          </div>}
+          <button type="button" className="btn btn-secondary btn-sm" disabled={busy || (desktopBridge.isDesktop() ? !archivePath.trim() : !archiveFile)} onClick={() => {
+            if (desktopBridge.isDesktop()) void loadPreview(archivePath);
+            else void handleUpload(archiveFile);
+          }}>Проверить архив</button>
 
           {loadingPreview && (
             <div className="mh-panel-empty" style={{ padding: "24px", textAlign: "center" }}>
@@ -233,7 +269,7 @@ export const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
 
           {/* Footer actions */}
           <div className="mh-modal-actions-end" style={{ marginTop: "12px" }}>
-            <button type="button" className="btn btn-ghost btn-sm" disabled={importing} onClick={onClose}>
+            <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={onClose}>
               Отмена
             </button>
             <button

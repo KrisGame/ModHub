@@ -92,20 +92,23 @@ func dpapiUnprotectRaw(enc, entropy []byte) ([]byte, error) {
 }
 
 // ProtectSecret protects a single config string via Windows DPAPI (preserving backwards compatibility with config.json).
-func ProtectSecret(plain string) string {
+func ProtectSecret(plain string) (string, error) {
 	clean := strings.TrimSpace(plain)
 	if clean == "" {
-		return ""
+		return "", nil
 	}
 	if strings.HasPrefix(clean, secretDPAPIPrefix) {
-		return clean
+		return clean, nil
 	}
 	enc, err := dpapiProtectRaw([]byte(clean), nil)
 	if err != nil {
-		return clean
+		return "", err
 	}
-	return secretDPAPIPrefix + base64.StdEncoding.EncodeToString(enc)
+	return secretDPAPIPrefix + base64.StdEncoding.EncodeToString(enc), nil
 }
+
+func ProtectSecretWithDir(_ string, plain string) (string, error) { return ProtectSecret(plain) }
+func UnprotectSecretWithDir(_ string, stored string) string       { return UnprotectSecret(stored) }
 
 func UnprotectSecret(stored string) string {
 	s := strings.TrimSpace(stored)

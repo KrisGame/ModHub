@@ -1,6 +1,9 @@
 package storage
 
-import "modhub/internal/domain"
+import (
+	"database/sql"
+	"modhub/internal/domain"
+)
 
 func (d *Database) UpsertModpack(rec domain.ModpackRecord) error {
 	if d == nil {
@@ -97,8 +100,15 @@ func (d *Database) ReplaceModpackFiles(modpackID string, files []domain.ModpackF
 	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM modpack_files WHERE modpack_id = ?`, modpackID); err != nil {
+	if err := replaceModpackFilesTx(tx, modpackID, files); err != nil {
 		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+func replaceModpackFilesTx(tx *sql.Tx, modpackID string, files []domain.ModpackFileRecord) error {
+	if _, err := tx.Exec(`DELETE FROM modpack_files WHERE modpack_id = ?`, modpackID); err != nil {
 		return err
 	}
 	if len(files) > 0 {
@@ -110,7 +120,6 @@ func (d *Database) ReplaceModpackFiles(modpackID string, files []domain.ModpackF
 			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`)
 		if err != nil {
-			_ = tx.Rollback()
 			return err
 		}
 		defer stmt.Close()
@@ -130,10 +139,45 @@ func (d *Database) ReplaceModpackFiles(modpackID string, files []domain.ModpackF
 				f.SourceProjectID, f.SourceFileID, f.SHA1, f.SHA256, f.SHA512,
 				f.Size, mng, opt, en, f.DownloadURL, f.UpdatedAt,
 			); err != nil {
-				_ = tx.Rollback()
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+// CommitModpackUpdate atomically advances pack metadata, file inventory and history.
+func (d *Database) CommitModpackUpdate(expected, rec domain.ModpackRecord, files []domain.ModpackFileRecord, update domain.ModpackUpdateRecord) error {
+	if d == nil || d.closed.Load() {
+		return sql.ErrConnDone
+	}
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	if d.closed.Load() {
+		return sql.ErrConnDone
+	}
+	tx, err := d.writeDB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(`UPDATE modpacks SET version=?, manifest_hash=?, source_version_id=?, mc_version=?, loader=?, loader_version=?, updated_at=? WHERE id=? AND version=? AND manifest_hash=? AND instance_id=?`, rec.Version, rec.ManifestHash, rec.SourceVersionID, rec.MCVersion, rec.Loader, rec.LoaderVersion, rec.UpdatedAt, rec.ID, expected.Version, expected.ManifestHash, expected.InstanceID)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return sql.ErrNoRows
+	}
+	if err := replaceModpackFilesTx(tx, rec.ID, files); err != nil {
+		return err
+	}
+	_, err = tx.Exec(`INSERT INTO modpack_updates (id, modpack_id, from_version, to_version, added_count, updated_count, removed_count, preserved_count, status, summary, applied_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, update.ID, update.ModpackID, update.FromVersion, update.ToVersion, update.AddedCount, update.UpdatedCount, update.RemovedCount, update.PreservedCount, update.Status, update.Summary, update.AppliedAt)
+	if err != nil {
+		return err
 	}
 	return tx.Commit()
 }

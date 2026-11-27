@@ -1,9 +1,11 @@
 package settings
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"modhub/internal/domain"
@@ -46,5 +48,83 @@ func TestConfigOverridesAndPacksPersistence(t *testing.T) {
 	}
 	if got := LoadPacksCompat(dir); len(got) != 1 || got[0].ID != "p1" {
 		t.Fatalf("LoadPacksCompat mismatch: %+v", got)
+	}
+}
+
+func TestCurseForgeKeyEncryptedWithDataDir(t *testing.T) {
+	dir := t.TempDir()
+	key := "$2a$10$nonwindowssecretkeyvalue1234567890"
+	if err := SaveAppConfig(dir, domain.AppConfig{CurseForgeAPIKey: key}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), key) {
+		t.Fatal("config.json contains plaintext CurseForge key")
+	}
+	if got := LoadAppConfig(dir).CurseForgeAPIKey; got != key {
+		t.Fatalf("decrypted key mismatch: %q", got)
+	}
+}
+
+func TestSaveConfigRejectsUnrecoverableCiphertext(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"curseforge_api_key":"mh-aesgcm:broken"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var cfg domain.AppConfig
+	rawConfig, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(rawConfig, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveAppConfig(dir, cfg); err == nil {
+		t.Fatal("expected decryption error")
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "mh-aesgcm:broken") {
+		t.Fatal("failed save overwrote original ciphertext")
+	}
+}
+
+func TestUnreadableCiphertextSurvivesUnrelatedEditAndExplicitReplacement(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	for _, ciphertext := range []string{"dpapi:broken", "mh-aesgcm:broken"} {
+		if err := os.WriteFile(configPath, []byte(`{"curseforge_api_key":"`+ciphertext+`","merge_threshold":70}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg := LoadAppConfig(dir)
+		if cfg.CurseForgeAPIKey != "" || !HasUnreadableCFKey(dir) {
+			t.Fatalf("unreadable secret exposed or not detected: %q", ciphertext)
+		}
+		cfg.MergeThreshold = 85
+		if err := SaveAppConfig(dir, cfg); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var saved domain.AppConfig
+		if err := json.Unmarshal(raw, &saved); err != nil {
+			t.Fatal(err)
+		}
+		if saved.CurseForgeAPIKey != ciphertext || saved.MergeThreshold != 85 {
+			t.Fatalf("unrelated edit lost ciphertext or threshold: %s", raw)
+		}
+		if err := SaveAppConfigReplacingKey(dir, cfg); err != nil {
+			t.Fatal(err)
+		}
+		if HasUnreadableCFKey(dir) {
+			t.Fatal("explicit clear retained old ciphertext")
+		}
 	}
 }

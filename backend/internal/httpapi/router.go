@@ -39,6 +39,7 @@ type Server struct {
 	container  *app.Container
 	publicDir  string
 	embeddedFS fs.FS
+	exports    exportRegistry
 }
 
 func NewServer(container *app.Container, publicDir string, embeddedFS fs.FS) *Server {
@@ -54,6 +55,8 @@ func (s *Server) mountAPIRoutes(r chi.Router) {
 		api.Use(localAPISecurityMiddleware)
 		api.Get("/media/icon", s.handleMediaIcon)
 		api.Get("/download-file", s.handleDownloadFile)
+		api.Get("/modpacks/export-file", s.handleDownloadExportFile)
+		api.Get("/instances/worlds/export-file", s.handleDownloadWorldFile)
 		api.Post("/download-pack", s.handleDownloadPack)
 
 		api.Group(func(gz chi.Router) {
@@ -178,6 +181,7 @@ func (s *Server) mountAPIRoutes(r chi.Router) {
 			gz.Get("/modpacks", s.handleListModpacks)
 			gz.Get("/modpacks/progress", s.handleGetModpackProgress)
 			gz.Post("/modpacks/preview-import", s.handlePreviewModpackImport)
+			gz.Post("/modpacks/upload-import", s.handleUploadModpackImport)
 			gz.Post("/modpacks/execute-import", s.handleExecuteModpackImport)
 			gz.Post("/modpacks/export", s.handleExportModpack)
 			gz.Post("/modpacks/preview-update", s.handlePreviewModpackUpdate)
@@ -1252,12 +1256,36 @@ func (s *Server) handleExportInstanceWorld(w http.ResponseWriter, r *http.Reques
 	if !decodeJSONBody(w, r, &req, false) {
 		return
 	}
-	res, err := s.container.Content.ExportWorld(req.InstanceID, req.Folder)
+	base := filepath.Join(s.container.DataDir, "exports", "worlds")
+	if err := os.MkdirAll(base, 0o700); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	dir, err := os.MkdirTemp(base, "world-*")
 	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	res, err := s.container.Content.ExportWorldTo(r.Context(), req.InstanceID, req.Folder, filepath.Join(dir, "world.zip"))
+	if err != nil {
+		_ = os.Remove(dir)
 		writeInstanceModErr(w, err)
 		return
 	}
+	key, err := s.registerExport(base, res.ArchivePath, res.Filename)
+	if err != nil {
+		_ = os.Remove(res.ArchivePath)
+		_ = os.Remove(dir)
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	res.DownloadURL = "/api/instances/worlds/export-file?token=" + url.QueryEscape(key)
+	res.ArchivePath = ""
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "export": res})
+}
+
+func (s *Server) handleDownloadWorldFile(w http.ResponseWriter, r *http.Request) {
+	s.serveRegisteredExport(w, r, filepath.Join(s.container.DataDir, "exports", "worlds"), ".zip")
 }
 
 func (s *Server) handleGetMinecraftManifest(w http.ResponseWriter, r *http.Request) {
@@ -1615,12 +1643,81 @@ func (s *Server) handleExportModpack(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSONBody(w, r, &req, false) {
 		return
 	}
+	// Never let an HTTP caller choose an arbitrary filesystem destination.
+	ext := ".modhub"
+	switch req.Format {
+	case modpacks.FormatMRPack:
+		ext = ".mrpack"
+	case modpacks.FormatCurseForge:
+		ext = ".zip"
+	}
+	stem := reSafeFilename.ReplaceAllString(strings.TrimSpace(req.Name), "-")
+	stem = strings.Trim(stem, "-")
+	if stem == "" {
+		stem = "modhub-pack"
+	}
+	if len(stem) > 96 {
+		stem = stem[:96]
+	}
+	base := filepath.Join(s.container.DataDir, "exports")
+	if err := os.MkdirAll(base, 0o700); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	dir, err := os.MkdirTemp(base, "pack-*")
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer os.Remove(dir) // Removes only an empty directory after a failed export.
+	req.OutputPath = filepath.Join(dir, stem+ext)
 	res, err := s.container.Modpacks.Export(r.Context(), req)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if res.OutputPath != "" {
+		if err := ensurePathWithin(filepath.Join(s.container.DataDir, "exports"), res.OutputPath); err != nil {
+			writeErr(w, http.StatusInternalServerError, "Путь экспорта находится вне каталога данных")
+			return
+		}
+		key, err := s.registerExport(base, res.OutputPath, filepath.Base(res.OutputPath))
+		if err != nil {
+			_ = os.Remove(res.OutputPath)
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		res.DownloadURL = "/api/modpacks/export-file?token=" + url.QueryEscape(key)
+		res.OutputPath = ""
+	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+func ensurePathWithin(baseDir, target string) error {
+	base, err := filepath.Abs(baseDir)
+	if err != nil {
+		return err
+	}
+	full, err := filepath.Abs(target)
+	if err != nil {
+		return err
+	}
+	if resolved, resolveErr := filepath.EvalSymlinks(full); resolveErr == nil {
+		full = resolved
+	}
+	resolvedBase, resolveErr := filepath.EvalSymlinks(base)
+	if resolveErr == nil {
+		base = resolvedBase
+	}
+	rel, err := filepath.Rel(base, full)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("path escapes data directory")
+	}
+	return nil
+}
+
+func (s *Server) handleDownloadExportFile(w http.ResponseWriter, r *http.Request) {
+	s.serveRegisteredExport(w, r, filepath.Join(s.container.DataDir, "exports"), ".modhub", ".mrpack", ".zip")
 }
 func (s *Server) handlePreviewModpackUpdate(w http.ResponseWriter, r *http.Request) {
 	var body struct {

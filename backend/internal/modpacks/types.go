@@ -268,12 +268,16 @@ type ExportModpackRequest struct {
 }
 
 type ExportModpackResult struct {
-	Cancelled  bool          `json:"cancelled"`
-	Format     ModpackFormat `json:"format"`
-	OutputPath string        `json:"output_path,omitempty"`
-	TotalFiles int           `json:"total_files"`
-	SizeBytes  int64         `json:"size_bytes"`
-	Warnings   []string      `json:"warnings,omitempty"`
+	Cancelled     bool          `json:"cancelled"`
+	Format        ModpackFormat `json:"format"`
+	OutputPath    string        `json:"output_path,omitempty"`
+	DownloadURL   string        `json:"download_url,omitempty"`
+	TotalFiles    int           `json:"total_files"`
+	EmbeddedFiles int           `json:"embedded_files"`
+	LinkedFiles   int           `json:"linked_files"`
+	SkippedFiles  int           `json:"skipped_files"`
+	SizeBytes     int64         `json:"size_bytes"`
+	Warnings      []string      `json:"warnings,omitempty"`
 }
 
 type UpdateDiffEntry struct {

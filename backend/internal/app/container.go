@@ -82,6 +82,8 @@ type Container struct {
 	syncProgress  int
 	syncTotal     int
 	lastCompleted float64
+	syncLastError string
+	syncProviders map[string]string
 	indexVersion  atomic.Int64
 
 	bgCtx     context.Context
@@ -286,17 +288,18 @@ func (c *Container) PublicConfigPayload() map[string]any {
 	cfg := c.GetConfig()
 	key := security.SanitizeCFKey(cfg.CurseForgeAPIKey)
 	return map[string]any{
-		"ok":                       true,
-		"curseforge_configured":    key != "",
-		"curseforge_key_masked":    security.MaskCFKey(key),
-		"merge_threshold":          cfg.MergeThreshold,
-		"proxy_url":                strings.TrimSpace(cfg.ProxyURL),
-		"proxy_detected":           netx.GetProxyStatus(),
-		"auto_install_medium_deps": cfg.AutoInstallMediumDeps,
-		"max_concurrent_downloads": cfg.MaxConcurrentDownloads,
-		"microsoft_configured":     c.Accounts != nil && c.Accounts.GetConfigStatus().Configured,
-		"microsoft_client_id":      strings.TrimSpace(cfg.MicrosoftClientID),
-		"port":                     cfg.Port,
+		"ok":                        true,
+		"curseforge_configured":     key != "",
+		"curseforge_key_unreadable": settings.HasUnreadableCFKey(c.DataDir),
+		"curseforge_key_masked":     security.MaskCFKey(key),
+		"merge_threshold":           cfg.MergeThreshold,
+		"proxy_url":                 strings.TrimSpace(cfg.ProxyURL),
+		"proxy_detected":            netx.GetProxyStatus(),
+		"auto_install_medium_deps":  cfg.AutoInstallMediumDeps,
+		"max_concurrent_downloads":  cfg.MaxConcurrentDownloads,
+		"microsoft_configured":      c.Accounts != nil && c.Accounts.GetConfigStatus().Configured,
+		"microsoft_client_id":       strings.TrimSpace(cfg.MicrosoftClientID),
+		"port":                      cfg.Port,
 	}
 }
 
@@ -345,9 +348,15 @@ func (c *Container) UpdateConfig(patch ConfigUpdatePatch) (map[string]any, error
 	if patch.MicrosoftClientID != nil {
 		nextCfg.MicrosoftClientID = strings.TrimSpace(*patch.MicrosoftClientID)
 	}
-	if err := settings.SaveAppConfig(c.DataDir, nextCfg); err != nil {
+	var saveErr error
+	if patch.CurseForgeAPIKey != nil {
+		saveErr = settings.SaveAppConfigReplacingKey(c.DataDir, nextCfg)
+	} else {
+		saveErr = settings.SaveAppConfig(c.DataDir, nextCfg)
+	}
+	if saveErr != nil {
 		c.cfgMu.Unlock()
-		return nil, fmt.Errorf("Не удалось сохранить конфигурацию на диск: %w", err)
+		return nil, fmt.Errorf("Не удалось сохранить конфигурацию на диск: %w", saveErr)
 	}
 	c.cfg = nextCfg
 	cfgCopy := c.cfg
@@ -544,22 +553,28 @@ func (c *Container) IndexStatusPayload() map[string]any {
 	prog := c.syncProgress
 	tot := c.syncTotal
 	lastDone := c.lastCompleted
+	lastErr := c.syncLastError
+	providers := make(map[string]string, len(c.syncProviders))
+	for provider, outcome := range c.syncProviders {
+		providers[provider] = outcome
+	}
 	c.syncMu.Unlock()
 	return map[string]any{
-		"ok":              true,
-		"running":         c.syncing.Load(),
-		"phase":           phase,
-		"progress":        prog,
-		"total_steps":     tot,
-		"last_completed":  lastDone,
-		"last_error":      "",
-		"index_version":   c.indexVersion.Load(),
-		"schema_version":  c.DB.SchemaVersion(),
-		"fts5":            c.DB.HasFTS5(),
-		"raw_counts":      rawCounts,
-		"merged_counts":   rawCounts,
-		"platform_counts": platCounts,
-		"media_cache":     c.Icons.Stats(),
+		"ok":                true,
+		"running":           c.syncing.Load(),
+		"phase":             phase,
+		"progress":          prog,
+		"total_steps":       tot,
+		"last_completed":    lastDone,
+		"last_error":        lastErr,
+		"provider_outcomes": providers,
+		"index_version":     c.indexVersion.Load(),
+		"schema_version":    c.DB.SchemaVersion(),
+		"fts5":              c.DB.HasFTS5(),
+		"raw_counts":        rawCounts,
+		"merged_counts":     rawCounts,
+		"platform_counts":   platCounts,
+		"media_cache":       c.Icons.Stats(),
 	}
 }
 
@@ -585,10 +600,40 @@ func (c *Container) TriggerBackgroundSync(full bool) bool {
 		hc := c.HTTP.WithContext(bgCtx)
 		cfKey := security.SanitizeCFKey(c.GetConfig().CurseForgeAPIKey)
 		types := []string{"mod", "resourcepack", "shader", "datapack"}
+		providers := map[string]string{"modrinth": "ok", "curseforge": "not_configured"}
+		if cfKey != "" {
+			providers["curseforge"] = "ok"
+		}
+		var firstError string
+		recordError := func(provider string, err error) {
+			if bgCtx.Err() != nil {
+				return
+			}
+			providers[provider] = "error"
+			if firstError == "" {
+				firstError = HumanizeSourceError(provider, err)
+			}
+			c.syncMu.Lock()
+			c.syncLastError = firstError
+			c.syncProviders[provider] = "error"
+			c.syncMu.Unlock()
+		}
+		defer func() {
+			c.syncMu.Lock()
+			c.syncLastError = firstError
+			c.syncProviders = providers
+			if bgCtx.Err() != nil {
+				c.syncPhase = "cancelled"
+			}
+			c.syncMu.Unlock()
+		}()
 
 		c.syncMu.Lock()
 		c.syncTotal = len(types) + 1
 		c.syncProgress = 0
+		c.syncPhase = "starting"
+		c.syncLastError = ""
+		c.syncProviders = map[string]string{"modrinth": "ok", "curseforge": providers["curseforge"]}
 		c.syncMu.Unlock()
 		c.Events.Publish(events.EventIndexSyncStarted, map[string]any{"full": full})
 
@@ -612,11 +657,15 @@ func (c *Container) TriggerBackgroundSync(full bool) bool {
 				if bgCtx.Err() != nil {
 					return
 				}
-				if items, _, err := catalog.SearchModrinth(hc, "", ct, "", nil, nil, nil, nil, "and", "", "downloads", 50, pg*50); err == nil && len(items) > 0 {
+				if items, _, err := catalog.SearchModrinth(hc, "", ct, "", nil, nil, nil, nil, "and", "", "downloads", 50, pg*50); err != nil {
+					recordError("modrinth", err)
+				} else if len(items) > 0 {
 					c.DB.UpsertCatalogItems(items)
 				}
 				if cfKey != "" && bgCtx.Err() == nil {
-					if items, _, err := catalog.SearchCurseForge(hc, cfKey, "", ct, "", "", "downloads", 50, pg*50); err == nil && len(items) > 0 {
+					if items, _, err := catalog.SearchCurseForge(hc, cfKey, "", ct, "", "", "downloads", 50, pg*50); err != nil {
+						recordError("curseforge", err)
+					} else if len(items) > 0 {
 						c.DB.UpsertCatalogItems(items)
 					}
 				}

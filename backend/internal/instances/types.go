@@ -60,52 +60,52 @@ type IntegrityIssue struct {
 
 // IntegrityReport is returned by Verify() and attached to Instance details.
 type IntegrityReport struct {
-	InstanceID          string           `json:"instance_id"`
-	Status              Status           `json:"status"`
-	RootExists          bool             `json:"root_exists"`
-	ManifestValid       bool             `json:"manifest_valid"`
-	GameDirExists       bool             `json:"game_dir_exists"`
-	SubdirsOK           bool             `json:"subdirs_ok"`
-	MissingSubdirs      []string         `json:"missing_subdirs,omitempty"`
-	SharedResourcesOK   bool             `json:"shared_resources_ok"`
-	JavaOK              bool             `json:"java_ok"`
-	JavaSummary         string           `json:"java_summary"`
-	GameFilesInstalled  bool             `json:"game_files_installed"`
-	ModsCount           int              `json:"mods_count"`
-	Issues              []IntegrityIssue `json:"issues"`
-	CheckedAt           int64            `json:"checked_at"`
+	InstanceID         string           `json:"instance_id"`
+	Status             Status           `json:"status"`
+	RootExists         bool             `json:"root_exists"`
+	ManifestValid      bool             `json:"manifest_valid"`
+	GameDirExists      bool             `json:"game_dir_exists"`
+	SubdirsOK          bool             `json:"subdirs_ok"`
+	MissingSubdirs     []string         `json:"missing_subdirs,omitempty"`
+	SharedResourcesOK  bool             `json:"shared_resources_ok"`
+	JavaOK             bool             `json:"java_ok"`
+	JavaSummary        string           `json:"java_summary"`
+	GameFilesInstalled bool             `json:"game_files_installed"`
+	ModsCount          int              `json:"mods_count"`
+	Issues             []IntegrityIssue `json:"issues"`
+	CheckedAt          int64            `json:"checked_at"`
 }
 
 // Instance is the rich runtime view of a managed Minecraft profile.
 type Instance struct {
-	ID               string                    `json:"id"`
-	Name             string                    `json:"name"`
-	Description      string                    `json:"description"`
-	Icon             string                    `json:"icon"`
-	MCVersion        string                    `json:"mc_version"`
-	InstanceType     InstanceType              `json:"instance_type"`
-	LoaderVersion    string                    `json:"loader_version,omitempty"`
-	RootDir          string                    `json:"root_dir"`
-	GameDir          string                    `json:"game_dir"`
-	JavaMode         JavaMode                  `json:"java_mode"`
-	JavaRuntimeID    string                    `json:"java_runtime_id,omitempty"`
-	JavaPath         string                    `json:"java_path,omitempty"`
-	JavaRequirement  *javart.RequirementResult `json:"java_requirement,omitempty"`
-	JavaResolved     *javart.JavaRuntime       `json:"java_resolved,omitempty"`
-	MemoryMinMB      int                       `json:"memory_min_mb"`
-	MemoryMaxMB      int                       `json:"memory_max_mb"`
-	LaunchSettings   LaunchSettings            `json:"launch_settings"`
-	LinkedPackID     string                    `json:"linked_pack_id,omitempty"`
-	LinkedPackName   string                    `json:"linked_pack_name,omitempty"`
-	LinkedPackItems  int                       `json:"linked_pack_items,omitempty"`
-	InstalledMods    []InstalledModRef         `json:"installed_mods"`
-	ModsCount        int                       `json:"mods_count"`
-	Status           Status                    `json:"status"`
-	Issues           []IntegrityIssue          `json:"issues"`
-	InUse            bool                      `json:"in_use"`
-	CreatedAt        int64                     `json:"created_at"`
-	UpdatedAt        int64                     `json:"updated_at"`
-	LastPlayedAt     int64                     `json:"last_played_at"`
+	ID              string                    `json:"id"`
+	Name            string                    `json:"name"`
+	Description     string                    `json:"description"`
+	Icon            string                    `json:"icon"`
+	MCVersion       string                    `json:"mc_version"`
+	InstanceType    InstanceType              `json:"instance_type"`
+	LoaderVersion   string                    `json:"loader_version,omitempty"`
+	RootDir         string                    `json:"root_dir"`
+	GameDir         string                    `json:"game_dir"`
+	JavaMode        JavaMode                  `json:"java_mode"`
+	JavaRuntimeID   string                    `json:"java_runtime_id,omitempty"`
+	JavaPath        string                    `json:"java_path,omitempty"`
+	JavaRequirement *javart.RequirementResult `json:"java_requirement,omitempty"`
+	JavaResolved    *javart.JavaRuntime       `json:"java_resolved,omitempty"`
+	MemoryMinMB     int                       `json:"memory_min_mb"`
+	MemoryMaxMB     int                       `json:"memory_max_mb"`
+	LaunchSettings  LaunchSettings            `json:"launch_settings"`
+	LinkedPackID    string                    `json:"linked_pack_id,omitempty"`
+	LinkedPackName  string                    `json:"linked_pack_name,omitempty"`
+	LinkedPackItems int                       `json:"linked_pack_items,omitempty"`
+	InstalledMods   []InstalledModRef         `json:"installed_mods"`
+	ModsCount       int                       `json:"mods_count"`
+	Status          Status                    `json:"status"`
+	Issues          []IntegrityIssue          `json:"issues"`
+	InUse           bool                      `json:"in_use"`
+	CreatedAt       int64                     `json:"created_at"`
+	UpdatedAt       int64                     `json:"updated_at"`
+	LastPlayedAt    int64                     `json:"last_played_at"`
 }
 
 // InstanceManifest is written atomically to <root_dir>/instance.json for portability and self-description.
@@ -264,6 +264,7 @@ type ExportWorldResult struct {
 	ArchivePath string `json:"archive_path"`
 	Filename    string `json:"filename"`
 	Size        int64  `json:"size"`
+	DownloadURL string `json:"download_url,omitempty"`
 }
 
 type ContentActionRequest struct {

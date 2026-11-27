@@ -1,17 +1,22 @@
 package httpapi
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"modhub/internal/app"
 	"modhub/internal/domain"
+	"modhub/internal/instances"
 	"modhub/internal/storage"
 )
 
@@ -111,6 +116,154 @@ func TestLocalAPISecurityAndStrictJSONAndRollback(t *testing.T) {
 	}
 	if packs := container.GetPacks(); len(packs) != 1 || packs[0].ID != "p1" {
 		t.Fatalf("packs mutated despite save error: %+v", packs)
+	}
+}
+
+func TestExportDownloadEndpointConstrainedToExportDir(t *testing.T) {
+	container, router, dir := newTestServer(t)
+	exports := filepath.Join(dir, "exports")
+	if err := os.MkdirAll(exports, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(exports, "test.modhub")
+	if err := os.WriteFile(archive, []byte("archive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := NewServer(container, dir, nil)
+	token, err := srv.registerExport(exports, archive, "test.modhub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func(target string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/api/modpacks/export-file?token="+url.QueryEscape(target), nil)
+		req.Host = "127.0.0.1:8080"
+		rec := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rec, req)
+		return rec
+	}
+	_ = router
+	if got := request(token); got.Code != http.StatusOK || got.Body.String() != "archive" {
+		t.Fatalf("valid download: status=%d body=%q", got.Code, got.Body.String())
+	}
+	if got := request(token); got.Code != http.StatusOK {
+		t.Fatalf("export should allow retry; got %d", got.Code)
+	}
+	outside := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := request(outside); got.Code != http.StatusNotFound {
+		t.Fatalf("outside path should be hidden; got %d", got.Code)
+	}
+	srv.exports.mu.Lock()
+	record := srv.exports.files[token]
+	record.expires = time.Now().Add(-time.Second)
+	srv.exports.files[token] = record
+	srv.exports.mu.Unlock()
+	if got := request(token); got.Code != http.StatusNotFound {
+		t.Fatalf("expired export should be hidden: %d", got.Code)
+	}
+	if _, err := os.Stat(archive); !os.IsNotExist(err) {
+		t.Fatalf("expired archive should be removed: %v", err)
+	}
+}
+
+func TestWebArchiveUploadAndPreview(t *testing.T) {
+	_, router, dir := newTestServer(t)
+	var archive bytes.Buffer
+	zw := zip.NewWriter(&archive)
+	entry, err := zw.Create("modrinth.index.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = entry.Write([]byte(`{"formatVersion":1,"game":"minecraft","versionId":"1","name":"Web Upload","files":[],"dependencies":{"minecraft":"1.20.1"}}`))
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	upload := func(filename string, contents []byte) *httptest.ResponseRecorder {
+		var body bytes.Buffer
+		mw := multipart.NewWriter(&body)
+		part, err := mw.CreateFormFile("archive", filename)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = part.Write(contents)
+		_ = mw.Close()
+		r := httptest.NewRequest(http.MethodPost, "/api/modpacks/upload-import", &body)
+		r.Header.Set("Content-Type", mw.FormDataContentType())
+		r.Header.Set("Origin", "http://127.0.0.1:8080")
+		r.Host = "127.0.0.1:8080"
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, r)
+		return w
+	}
+	good := upload("test.mrpack", archive.Bytes())
+	if good.Code != http.StatusOK || !strings.Contains(good.Body.String(), "preview_id") {
+		t.Fatalf("upload preview status=%d body=%s", good.Code, good.Body.String())
+	}
+	if bad := upload("../../test.txt", archive.Bytes()); bad.Code != http.StatusBadRequest {
+		t.Fatalf("bad extension: %d", bad.Code)
+	}
+	if bad := upload("test.zip", []byte("not zip")); bad.Code != http.StatusBadRequest {
+		t.Fatalf("bad zip: %d", bad.Code)
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, "modpacks_cache", "uploads"))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("upload cleanup: %v %v", entries, err)
+	}
+}
+
+func TestWebModpackExportRoundTrip(t *testing.T) {
+	container, router, _ := newTestServer(t)
+	inst, err := container.Instances.Create(instances.CreateInstanceRequest{Name: "Round Trip", InstanceType: instances.TypeVanilla, MCVersion: "1.20.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(inst.GameDir, "config", "smoke.toml"), []byte("value=1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := func(method, path, ct string, body *bytes.Buffer) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, body)
+		req.Host = "127.0.0.1:8080"
+		if ct != "" {
+			req.Header.Set("Content-Type", ct)
+		}
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+	payload, err := json.Marshal(map[string]any{"source_type": "instance", "source_id": inst.ID, "format": "modhub", "name": "Round Trip", "include_configs": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	export := request(http.MethodPost, "/api/modpacks/export", "application/json", bytes.NewBuffer(payload))
+	var result struct {
+		URL      string `json:"download_url"`
+		Path     string `json:"output_path"`
+		Embedded int    `json:"embedded_files"`
+	}
+	if err := json.Unmarshal(export.Body.Bytes(), &result); err != nil || export.Code != http.StatusOK || !strings.HasPrefix(result.URL, "/api/modpacks/export-file?token=") || result.Path != "" || result.Embedded != 1 {
+		t.Fatalf("export: %d %s (%v)", export.Code, export.Body.String(), err)
+	}
+	download := request(http.MethodGet, result.URL, "", bytes.NewBuffer(nil))
+	if download.Code != http.StatusOK {
+		t.Fatalf("download: %d %s", download.Code, download.Body.String())
+	}
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	part, err := mw.CreateFormFile("archive", "round-trip.modhub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(download.Body.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	preview := request(http.MethodPost, "/api/modpacks/upload-import", mw.FormDataContentType(), &body)
+	if preview.Code != http.StatusOK || !strings.Contains(preview.Body.String(), "smoke.toml") {
+		t.Fatalf("re-upload: %d %s", preview.Code, preview.Body.String())
 	}
 }
 

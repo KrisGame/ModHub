@@ -1,4 +1,5 @@
 import React, { lazy, startTransition, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAppSection } from "./hooks/useAppSection";
 import { api } from "./api";
 import { AppNavRail, type AppSection } from "./components/AppNavRail";
 import { ContextMenu } from "./components/ContextMenu";
@@ -270,7 +271,7 @@ export const App: React.FC = () => {
   const [recentProjects, setRecentProjects] = useState<ProjectCard[]>(() => loadArr<ProjectCard>(RECENT_KEY));
 
   // Desktop Shell Navigation, Download Manager & Native App Info
-  const [activeSection, setActiveSection] = useState<AppSection>("catalog");
+  const [activeSection, setActiveSection] = useAppSection();
   const [modInstallTarget, setModInstallTarget] = useState<GameInstance | null>(null);
   const requestedInstanceSelect = null;
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -362,7 +363,7 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     const onGlobalKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && !document.activeElement?.closest('[aria-modal="true"]')) {
         if (e.key === "1") { e.preventDefault(); setActiveSection("home"); }
         else if (e.key === "2") { e.preventDefault(); setActiveSection("instances"); }
         else if (e.key === "3") { e.preventDefault(); setActiveSection("catalog"); }
@@ -381,7 +382,7 @@ export const App: React.FC = () => {
     };
     window.addEventListener("keydown", onGlobalKey);
     return () => window.removeEventListener("keydown", onGlobalKey);
-  }, [activeMod, quickDownloadItem, installToProfileItem, settingsOpen, aboutOpen, ctxMenu]);
+  }, [activeMod, quickDownloadItem, installToProfileItem, settingsOpen, aboutOpen, ctxMenu, setActiveSection]);
 
   // Suppress default web browser context menu in WebView2 for native desktop feel
   useEffect(() => {
@@ -1422,12 +1423,19 @@ export const App: React.FC = () => {
   }, []);
   const handleOpenMobileSidebar = useCallback(() => setMobileSidebarOpen(true), []);
   const handleOpenSettings = useCallback(() => setSettingsOpen(true), []);
-  const handleSelectSection = useCallback((sec: AppSection) => {
-    setActiveSection(sec);
+  const previousSection = useRef(activeSection);
+  useEffect(() => {
+    if (previousSection.current === activeSection) return;
+    previousSection.current = activeSection;
     setMobileSidebarOpen(false);
     setPageScrollTop(0);
-    syncActiveSection(sec);
-  }, [syncActiveSection]);
+    syncActiveSection(activeSection);
+  }, [activeSection, syncActiveSection]);
+  const handleSelectSection = useCallback((sec: AppSection) => {
+    setMobileSidebarOpen(false);
+    setActiveSection(sec);
+    if (sec === activeSection) syncActiveSection(sec);
+  }, [activeSection, setActiveSection, syncActiveSection]);
   const handleOpenAbout = useCallback(() => setAboutOpen(true), []);
 
   const handleAuthorFilter = useCallback((a: string) => {
@@ -1512,6 +1520,7 @@ export const App: React.FC = () => {
             instances={instanceMgr.instances}
             paths={instanceMgr.paths}
             loading={instanceMgr.loading}
+            loadError={instanceMgr.loadError}
             mcVersions={mcVersionsAll}
             accounts={accountMgr.accounts}
             activeAccount={accountMgr.activeAccount}

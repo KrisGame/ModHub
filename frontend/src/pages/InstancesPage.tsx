@@ -44,6 +44,7 @@ interface InstancesPageProps {
   instances: GameInstance[];
   paths: SharedStoragePaths | null;
   loading: boolean;
+  loadError: string;
   mcVersions: string[];
   accounts: AccountView[];
   activeAccount: AccountView | null;
@@ -124,6 +125,7 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
   instances,
   paths,
   loading,
+  loadError,
   mcVersions,
   accounts,
   activeAccount,
@@ -207,6 +209,7 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
   const [worldsSearch, setWorldsSearch] = useState("");
   const [worldsLoading, setWorldsLoading] = useState(false);
   const [exportingWorld, setExportingWorld] = useState<string | null>(null);
+  const [worldDownloads, setWorldDownloads] = useState<Record<string, string>>({});
 
   // Modals state
   const [createOpen, setCreateOpen] = useState(false);
@@ -700,7 +703,11 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
     setExportingWorld(folder);
     try {
       const res = await api.exportInstanceWorld(selected.id, folder);
-      onToast(`Бэкап мира сохранён: «${res.filename}» (${formatBytes(res.size)})`, "ok");
+      if (res.download_url) {
+        const url = res.download_url;
+        setWorldDownloads((current) => ({ ...current, [`${selected.id}/${folder}`]: url }));
+      }
+      onToast(`${res.download_url ? "Архив мира готов" : "Бэкап мира сохранён"}: «${res.filename}» (${formatBytes(res.size)})`, "ok");
     } catch (err) {
       onToast(err instanceof Error ? err.message : String(err), "err");
     } finally {
@@ -1460,6 +1467,7 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
                       >
                         {exportingWorld === w.folder ? "Архивация…" : "Экспорт в ZIP (бэкап)"}
                       </button>
+                      {worldDownloads[`${selected.id}/${w.folder}`] && <a className="btn btn-ghost btn-xs" href={worldDownloads[`${selected.id}/${w.folder}`]} download>Скачать ZIP ещё раз</a>}
                       {desktopBridge.isDesktop() && (
                         <button type="button" className="btn btn-ghost btn-xs" onClick={() => handleOpenDir(selected.id, "saves")}>
                           Папка saves
@@ -1764,7 +1772,7 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
         </div>
         <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
           <button type="button" className="btn btn-secondary btn-sm" onClick={() => setImportOpen(true)}>
-            📦 Импорт сборки (.mrpack / .zip)
+            📦 Импорт сборки (.mrpack / .zip / .modhub)
           </button>
           <button type="button" className="btn btn-primary btn-sm" onClick={() => setCreateOpen(true)}>
             + Создать профиль
@@ -1791,12 +1799,18 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
         </div>
       )}
 
+      {loadError && (
+        <div className="mh-panel" role="alert">
+          <p>{instances.length ? "Не удалось обновить список профилей. Показаны последние загруженные данные." : "Не удалось загрузить игровые профили."} {loadError}</p>
+          <button type="button" className="btn btn-secondary" onClick={() => void onRefresh()}>Повторить</button>
+        </div>
+      )}
       {loading && instances.length === 0 ? (
         <div className="empty-state">
           <span className="spinner" style={{ marginRight: 8, verticalAlign: "middle" }} />
           Загрузка профилей…
         </div>
-      ) : instances.length === 0 ? (
+      ) : instances.length === 0 && loadError ? null : instances.length === 0 ? (
         <section className="mh-panel mh-placeholder-card">
           <h2>У вас пока нет игровых профилей</h2>
           <p className="mh-placeholder-text">

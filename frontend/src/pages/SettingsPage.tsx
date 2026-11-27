@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api";
-import { desktopBridge } from "../services/bridge";
+import { desktopBridge, subscribeBackendEvents } from "../services/bridge";
 import type { DesktopAppInfo } from "../services/wails";
 import type { AccentPreset, BgPreset, NetworkCheckResponse, PublicConfig, ThemeMode } from "../types";
+import type { DesktopIndexStatus } from "../services/wails";
+import { ModpackUpdatesPanel } from "../components/ModpackUpdatesPanel";
 
 interface SettingsPageProps {
   appInfo: DesktopAppInfo | null;
@@ -56,6 +58,38 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [medDepBusy, setMedDepBusy] = useState(false);
   const [netResult, setNetResult] = useState<NetworkCheckResponse | null>(null);
   const [netError, setNetError] = useState("");
+  const [indexStatus, setIndexStatus] = useState<DesktopIndexStatus | null>(null);
+  const [indexBusy, setIndexBusy] = useState(false);
+  const [actualDataDir, setActualDataDir] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    void desktopBridge.getAppInfo().then((info) => {
+      if (active) setActualDataDir(info?.data_dir?.dir || "");
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const load = () => api.getIndexStatus().then((status) => { if (active) setIndexStatus(status); }).catch(() => {});
+    void load();
+    const timer = window.setInterval(() => { void load(); }, 2000);
+    const unsubscribe = subscribeBackendEvents((ev) => {
+      if (ev.name.startsWith("index.sync.")) void load();
+    });
+    return () => { active = false; window.clearInterval(timer); unsubscribe(); };
+  }, []);
+
+  const syncIndex = async () => {
+    setIndexBusy(true);
+    try {
+      const result = await api.triggerIndexSync(false);
+      setIndexStatus(result.status);
+      onToast(result.started ? "Синхронизация каталога запущена" : "Синхронизация уже выполняется", "info");
+    } catch (err) { onToast(`Не удалось запустить синхронизацию: ${(err as Error).message}`, "err"); }
+    finally { setIndexBusy(false); }
+  };
 
   useEffect(() => {
     setProxyInput(config.proxy_url || "");
@@ -186,8 +220,21 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             Здесь сохраняются ваши профили, настройки и загруженные ресурсы.
           </p>
           <div className="mh-data-dir-box mono-num">
-            <div>{appInfo?.data_dir?.dir || "Локальная директория data/"}</div>
+            <div>{actualDataDir || appInfo?.data_dir?.dir || "Путь недоступен в веб-режиме"}</div>
           </div>
+        </section>
+        <ModpackUpdatesPanel onToast={onToast} />
+
+        <section className="mh-panel">
+          <div className="mh-panel-head"><h2>Каталог и индекс</h2>
+            <button type="button" className={`btn btn-secondary btn-xs${indexBusy ? " is-loading" : ""}`} disabled={indexBusy || !!indexStatus?.running} onClick={() => void syncIndex()}>
+              {indexStatus?.running ? "Синхронизация…" : indexBusy ? "Запуск…" : "Синхронизировать"}
+            </button>
+          </div>
+          <p className="help-text">{indexStatus ? `Состояние: ${indexStatus.phase || (indexStatus.running ? "выполняется" : "готово")}${indexStatus.total_steps > 0 ? ` • ${indexStatus.progress}/${indexStatus.total_steps} шагов` : ""} • Версия индекса ${indexStatus.index_version}` : "Состояние индекса недоступно."}</p>
+          {indexStatus?.last_completed ? <p className="help-text">Последнее завершение: {new Date(indexStatus.last_completed * 1000).toLocaleString()}</p> : null}
+          {indexStatus?.provider_outcomes && <p className="help-text">Источники: Modrinth — {indexStatus.provider_outcomes.modrinth || "нет данных"}; CurseForge — {indexStatus.provider_outcomes.curseforge === "not_configured" ? "ключ не задан" : indexStatus.provider_outcomes.curseforge || "нет данных"}</p>}
+          {indexStatus?.last_error && <p className="inline-status is-err" role="alert">{indexStatus.last_error}</p>}
         </section>
 
         {/* CurseForge API */}
@@ -227,6 +274,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               Удалить ключ
             </button>
           </div>
+          {config.curseforge_key_unreadable && <div className="inline-status is-err" role="alert">Сохранённый ключ не удалось расшифровать. Он не используется; введите новый ключ или удалите старый. Другие настройки сохраняются без потери зашифрованного значения.</div>}
           {statusMsg.text && (
             <div className={`inline-status${statusMsg.kind ? ` is-${statusMsg.kind}` : ""}`}>{statusMsg.text}</div>
           )}

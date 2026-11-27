@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -380,31 +381,97 @@ func (c *Content) ExportWorld(instanceID, folder string) (ExportWorldResult, err
 		return ExportWorldResult{}, fmt.Errorf("папка сохранения мира не найдена")
 	}
 
-	// Store backups in <inst.RootDir>/backups
+	if err := validateWorldSize(worldPath); err != nil {
+		return ExportWorldResult{}, err
+	}
 	backupsDir := filepath.Join(inst.RootDir, "backups")
-	if err := os.MkdirAll(backupsDir, 0o755); err != nil {
+	if err := os.MkdirAll(backupsDir, 0o700); err != nil {
 		return ExportWorldResult{}, fmt.Errorf("не удалось создать папку backups: %w", err)
 	}
-
 	timestamp := time.Now().Format("20060102-150405")
 	archiveName := fmt.Sprintf("%s-backup-%s.zip", name, timestamp)
-	archivePath := filepath.Join(backupsDir, archiveName)
+	return c.exportWorldToPath(context.Background(), worldPath, filepath.Join(backupsDir, archiveName), archiveName)
+}
 
-	outFile, err := os.Create(archivePath)
-	if err != nil {
-		return ExportWorldResult{}, fmt.Errorf("не удалось создать архив: %w", err)
-	}
-	defer outFile.Close()
-
-	zw := zip.NewWriter(outFile)
-	defer zw.Close()
-
-	err = filepath.Walk(worldPath, func(path string, info os.FileInfo, walkErr error) error {
+func validateWorldSize(worldPath string) error {
+	const maxWorldFiles = 100000
+	const maxWorldBytes = int64(8) << 30
+	files := 0
+	var totalBytes int64
+	return filepath.Walk(worldPath, func(_ string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("символические ссылки в мире не поддерживаются")
+		}
 		if info.IsDir() {
 			return nil
+		}
+		files++
+		if files > maxWorldFiles {
+			return fmt.Errorf("мир содержит слишком много файлов (лимит %d)", maxWorldFiles)
+		}
+		if info.Size() < 0 || totalBytes > int64(^uint64(0)>>1)-info.Size() {
+			return fmt.Errorf("размер мира превышает допустимый предел")
+		}
+		totalBytes += info.Size()
+		if totalBytes > maxWorldBytes {
+			return fmt.Errorf("размер мира превышает лимит 8 ГБ")
+		}
+		return nil
+	})
+}
+
+type worldExportReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r worldExportReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
+}
+
+func (c *Content) exportWorldToPath(ctx context.Context, worldPath, archivePath, archiveName string) (ExportWorldResult, error) {
+	if err := os.MkdirAll(filepath.Dir(archivePath), 0o700); err != nil {
+		return ExportWorldResult{}, fmt.Errorf("не удалось создать папку экспорта: %w", err)
+	}
+
+	tmpFile, err := os.CreateTemp(filepath.Dir(archivePath), ".world-backup-*.tmp")
+	if err != nil {
+		return ExportWorldResult{}, fmt.Errorf("не удалось создать архив: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	cleanup := func() { _ = tmpFile.Close(); _ = os.Remove(tmpPath) }
+
+	zw := zip.NewWriter(tmpFile)
+	const maxWorldBytes = int64(8) << 30
+	const maxWorldFiles = 100000
+	var streamedBytes int64
+	streamedFiles := 0
+
+	err = filepath.Walk(worldPath, func(path string, info os.FileInfo, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if walkErr != nil {
+			return walkErr
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("символические ссылки в мире не поддерживаются")
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("в архив мира можно добавить только обычные файлы")
+		}
+		streamedFiles++
+		if streamedFiles > maxWorldFiles || info.Size() < 0 || info.Size() > maxWorldBytes-streamedBytes {
+			return fmt.Errorf("world exceeds export limits")
 		}
 		rel, relErr := filepath.Rel(worldPath, path)
 		if relErr != nil {
@@ -429,18 +496,38 @@ func (c *Content) ExportWorld(instanceID, folder string) (ExportWorldResult, err
 		if openErr != nil {
 			return openErr
 		}
-		_, copyErr := io.Copy(w, rf)
+		// Recheck bytes while streaming: files can grow after the initial scan.
+		written, copyErr := io.Copy(w, io.LimitReader(worldExportReader{ctx: ctx, reader: rf}, maxWorldBytes-streamedBytes+1))
 		_ = rf.Close()
+		streamedBytes += written
+		if streamedBytes > maxWorldBytes {
+			return fmt.Errorf("world exceeds export size limit")
+		}
 		return copyErr
 	})
 
 	if err != nil {
-		_ = os.Remove(archivePath)
+		_ = zw.Close()
+		cleanup()
 		return ExportWorldResult{}, fmt.Errorf("ошибка при архивации мира: %w", err)
 	}
 
-	_ = zw.Close()
-	_ = outFile.Close()
+	if err := zw.Close(); err != nil {
+		cleanup()
+		return ExportWorldResult{}, err
+	}
+	if err := tmpFile.Sync(); err != nil {
+		cleanup()
+		return ExportWorldResult{}, err
+	}
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return ExportWorldResult{}, err
+	}
+	if err := os.Rename(tmpPath, archivePath); err != nil {
+		_ = os.Remove(tmpPath)
+		return ExportWorldResult{}, err
+	}
 
 	stat, _ := os.Stat(archivePath)
 	var sz int64
@@ -453,6 +540,39 @@ func (c *Content) ExportWorld(instanceID, folder string) (ExportWorldResult, err
 		Filename:    archiveName,
 		Size:        sz,
 	}, nil
+}
+
+// ExportWorldTo writes a safe world archive to a caller-selected destination.
+// HTTP callers must constrain the destination to their own temporary export area.
+func (c *Content) ExportWorldTo(ctx context.Context, instanceID, folder, targetPath string) (ExportWorldResult, error) {
+	inst, err := c.mgr.Get(instanceID)
+	if err != nil {
+		return ExportWorldResult{}, err
+	}
+	name, err := sanitizeWorldFolderName(folder)
+	if err != nil {
+		return ExportWorldResult{}, err
+	}
+	worldPath := filepath.Join(inst.GameDir, "saves", name)
+	if err := validateModTarget(filepath.Join(inst.GameDir, "saves"), worldPath); err != nil {
+		return ExportWorldResult{}, err
+	}
+	fi, err := os.Stat(worldPath)
+	if err != nil || !fi.IsDir() {
+		return ExportWorldResult{}, fmt.Errorf("папка сохранения мира не найдена")
+	}
+	if strings.TrimSpace(targetPath) == "" {
+		return ExportWorldResult{}, fmt.Errorf("не указан путь скачивания")
+	}
+	return c.exportWorldToPath(ctx, worldPath, targetPath, name+".zip")
+}
+
+// RemoveExport removes an export after the HTTP download finishes.
+func (c *Content) RemoveExport(exportDir, targetPath string) error {
+	if err := validateModTarget(exportDir, targetPath); err != nil {
+		return err
+	}
+	return os.Remove(targetPath)
 }
 
 func (c *Content) mutableInstance(instanceID string) (Instance, error) {

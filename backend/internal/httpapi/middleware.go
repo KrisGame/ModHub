@@ -154,7 +154,8 @@ func localAPISecurityMiddleware(next http.Handler) http.Handler {
 			if r.ContentLength != 0 || strings.TrimSpace(r.Header.Get("Content-Type")) != "" {
 				ct := strings.TrimSpace(r.Header.Get("Content-Type"))
 				mediaType, _, err := mime.ParseMediaType(ct)
-				if err != nil || !strings.EqualFold(mediaType, "application/json") {
+				isUpload := r.URL.Path == "/api/modpacks/upload-import"
+				if err != nil || (isUpload && mediaType != "multipart/form-data") || (!isUpload && !strings.EqualFold(mediaType, "application/json")) {
 					writeErr(w, http.StatusUnsupportedMediaType, "Требуется Content-Type: application/json")
 					return
 				}
@@ -163,6 +164,9 @@ func localAPISecurityMiddleware(next http.Handler) http.Handler {
 			maxBody := int64(4 << 20)
 			if r.URL.Path == "/api/download-pack" {
 				maxBody = 8 << 20
+			}
+			if r.URL.Path == "/api/modpacks/upload-import" {
+				maxBody = maxImportUploadBytes + 1024*1024
 			}
 			r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 		}

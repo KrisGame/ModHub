@@ -310,15 +310,17 @@ export const ModCard: React.FC<ModCardProps> = React.memo(({
           <div className="tbl-col-text">
             <div className="tbl-title-line">
               {hasQuery ? (
-                <div
-                  className="card-title tbl-row-title"
+                <button
+                  type="button"
+                  className="card-title tbl-row-title mh-project-title-button"
+                  onClick={(event) => { event.stopPropagation(); handleCardOpen(); }}
                   title={item.title}
                   dangerouslySetInnerHTML={{ __html: highlightSearchTermsHtml(item.title, trimmedQuery) }}
                 />
               ) : (
-                <div className="card-title tbl-row-title" title={item.title}>
+                <button type="button" className="card-title tbl-row-title mh-project-title-button" title={item.title} onClick={(event) => { event.stopPropagation(); handleCardOpen(); }}>
                   {item.title}
-                </div>
+                </button>
               )}
               <span className="tbl-row-author">
                 от{" "}
@@ -476,15 +478,17 @@ export const ModCard: React.FC<ModCardProps> = React.memo(({
         </div>
         <div className="card-title-wrap">
           {hasQuery ? (
-            <div
-              className="card-title"
+            <button
+              type="button"
+              className="card-title mh-project-title-button"
+              onClick={(event) => { event.stopPropagation(); handleCardOpen(); }}
               title={item.title}
               dangerouslySetInnerHTML={{ __html: highlightSearchTermsHtml(item.title, trimmedQuery) }}
             />
           ) : (
-            <div className="card-title" title={item.title}>
+            <button type="button" className="card-title mh-project-title-button" title={item.title} onClick={(event) => { event.stopPropagation(); handleCardOpen(); }}>
               {item.title}
-            </div>
+            </button>
           )}
           <div className="card-author">
             от{" "}

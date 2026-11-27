@@ -1,9 +1,10 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useState } from "react";
+import { useModalFocus } from "../hooks/useModalFocus";
 import { createPortal } from "react-dom";
 import { api } from "../api";
 import { CloseIcon } from "../icons";
 import { desktopBridge } from "../services/bridge";
-import type { ExportModpackInput, GameInstance, ModpackFormat } from "../types";
+import type { ExportModpackInput, ExportModpackResult, GameInstance, ModpackFormat } from "../types";
 import { formatBytes } from "../utils";
 
 interface ExportModpackModalProps {
@@ -32,14 +33,8 @@ export const ExportModpackModal: React.FC<ExportModpackModalProps> = ({ instance
   const [includeSaves, setIncludeSaves] = useState(false);
   const [includeExtraFiles, setIncludeExtraFiles] = useState(false);
   const [busy, setBusy] = useState(false);
-  const dialogRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const previousFocus = document.activeElement;
-    dialogRef.current?.focus();
-    return () => {
-      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
-    };
-  }, []);
+  const [completed, setCompleted] = useState<ExportModpackResult | null>(null);
+  const dialogRef = useModalFocus(true, onClose, busy);
 
   const exportPack = async () => {
     if (busy) return;
@@ -56,9 +51,7 @@ export const ExportModpackModal: React.FC<ExportModpackModalProps> = ({ instance
       };
       const result = await api.exportModpack(req);
       if (result.cancelled) return;
-      const warnings = result.warnings?.length ? ` Предупреждения: ${result.warnings.join("; ")}` : "";
-      onToast(`Сборка экспортирована: ${result.output_path || "архив готов"} • ${result.total_files} файлов • ${formatBytes(result.size_bytes)}.${warnings}`, "ok");
-      onClose();
+      setCompleted(result);
     } catch (err) {
       onToast(err instanceof Error ? err.message : String(err), "err");
     } finally {
@@ -80,17 +73,19 @@ export const ExportModpackModal: React.FC<ExportModpackModalProps> = ({ instance
         aria-labelledby="export-pack-title"
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
-        onKeyDown={(event) => {
-          if (event.key !== "Escape") return;
-          event.stopPropagation();
-          if (!busy) onClose();
-        }}
       >
         <div className="modal-header">
           <div><h2 id="export-pack-title" className="modal-title">Экспорт сборки</h2><p className="modal-subtitle">Профиль «{instance.name}»</p></div>
           <button type="button" className="icon-close" aria-label="Закрыть" disabled={busy} onClick={onClose}><CloseIcon size={15} /></button>
         </div>
         <div className="modal-body mh-form-stack">
+          {completed ? <>
+            <p role="status">Архив готов • {formatBytes(completed.size_bytes)}</p>
+            <p>В архиве: {completed.embedded_files} • По ссылкам: {completed.linked_files} • Пропущено: {completed.skipped_files}</p>
+            {completed.output_path && <p className="mh-muted-meta">{completed.output_path}</p>}
+            {completed.download_url && <a href={completed.download_url} download>Скачать архив ещё раз</a>}
+            {!!completed.warnings?.length && <ul>{completed.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>}
+          </> : <>
           <div className="mh-form-field"><label htmlFor="export-pack-format">Формат</label><select id="export-pack-format" className="text-input" value={format} onChange={(e) => setFormat(e.target.value as ModpackFormat)}>{FORMATS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}</select></div>
           <div className="mh-form-field"><label htmlFor="export-pack-author">Автор (необязательно)</label><input id="export-pack-author" className="text-input" value={author} onChange={(e) => setAuthor(e.target.value)} /></div>
           <div className="mh-form-field"><label htmlFor="export-pack-description">Описание</label><textarea id="export-pack-description" className="text-input" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} /></div>
@@ -103,10 +98,11 @@ export const ExportModpackModal: React.FC<ExportModpackModalProps> = ({ instance
           </fieldset>
           {format !== "modhub" && <p className="mh-muted-meta">Для Modrinth/CurseForge экспорт включайте только моды и datapacks, которые имеют идентификаторы платформы. Локальные конфиги и файлы попадут в overrides только если они есть в профиле. Пропуски будут указаны в предупреждениях.</p>}
           {!desktopBridge.isDesktop() && <p className="mh-muted-meta">После экспорта архив будет загружен браузером.</p>}
+          </>}
         </div>
         <div className="mh-export-modal-actions">
-          <button type="button" className="btn btn-secondary" disabled={busy} onClick={onClose}>Отмена</button>
-          <button type="button" className={`btn btn-primary${busy ? " is-loading" : ""}`} disabled={busy} onClick={() => void exportPack()}>{busy ? "Экспорт…" : "Экспортировать"}</button>
+          <button type="button" className="btn btn-secondary" disabled={busy} onClick={onClose}>{completed ? "Закрыть" : "Отмена"}</button>
+          {!completed && <button type="button" className={`btn btn-primary${busy ? " is-loading" : ""}`} disabled={busy} onClick={() => void exportPack()}>{busy ? "Экспорт…" : "Экспортировать"}</button>}
         </div>
       </div>
     </div>,

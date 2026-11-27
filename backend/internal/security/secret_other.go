@@ -6,6 +6,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -14,18 +15,69 @@ import (
 	"strings"
 )
 
-const secretDPAPIPrefix = "dpapi:"
+const (
+	secretDPAPIPrefix = "dpapi:"
+	secretAESPrefix   = "mh-aesgcm:"
+)
 
-func ProtectSecret(plain string) string {
-	return strings.TrimSpace(plain)
+func ProtectSecret(plain string) (string, error) {
+	return ProtectSecretWithDir(configSecretDataDir(), plain)
+}
+
+func ProtectSecretWithDir(dataDir, plain string) (string, error) {
+	clean := strings.TrimSpace(plain)
+	if clean == "" {
+		return clean, nil
+	}
+	if strings.TrimSpace(dataDir) == "" {
+		return "", errors.New("путь данных для защищённого хранения не задан")
+	}
+	if strings.HasPrefix(clean, secretAESPrefix) {
+		if UnprotectSecretWithDir(dataDir, clean) == "" {
+			return "", errors.New("не удалось проверить существующий шифротекст")
+		}
+		return clean, nil
+	}
+	sealed, err := SealVaultBlob(filepath.Join(dataDir, "vault"), []byte(clean))
+	if err != nil {
+		return "", err
+	}
+	return secretAESPrefix + base64.StdEncoding.EncodeToString(sealed), nil
 }
 
 func UnprotectSecret(stored string) string {
+	return UnprotectSecretWithDir(configSecretDataDir(), stored)
+}
+
+func UnprotectSecretWithDir(dataDir, stored string) string {
 	s := strings.TrimSpace(stored)
+	if strings.HasPrefix(s, secretAESPrefix) {
+		if strings.TrimSpace(dataDir) == "" {
+			return s
+		}
+		sealed, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(s, secretAESPrefix))
+		if err != nil {
+			return s
+		}
+		plain, err := OpenVaultBlob(filepath.Join(dataDir, "vault"), sealed)
+		if err != nil {
+			return s
+		}
+		return string(plain)
+	}
 	if strings.HasPrefix(s, secretDPAPIPrefix) {
 		return ""
 	}
 	return s
+}
+
+// Config secrets use the same per-user data directory as the app config.
+// Override this path in tests and nonstandard deployments via MODHUB_DATA_DIR.
+func configSecretDataDir() string {
+	if dir := strings.TrimSpace(os.Getenv("MODHUB_DATA_DIR")); dir != "" {
+		return dir
+	}
+	return ""
 }
 
 func loadOrCreateLocalVaultKey(vaultDir string) ([]byte, error) {
@@ -35,9 +87,20 @@ func loadOrCreateLocalVaultKey(vaultDir string) ([]byte, error) {
 	if err := os.MkdirAll(vaultDir, 0o700); err != nil {
 		return nil, err
 	}
+	if err := os.Chmod(vaultDir, 0o700); err != nil {
+		return nil, err
+	}
 	keyPath := filepath.Join(vaultDir, ".vault.key")
-	if raw, err := os.ReadFile(keyPath); err == nil && len(raw) == 32 {
+	if raw, err := os.ReadFile(keyPath); err == nil {
+		if len(raw) != 32 {
+			return nil, errors.New("некорректный ключ защищённого хранилища")
+		}
+		if err := os.Chmod(keyPath, 0o600); err != nil {
+			return nil, err
+		}
 		return raw, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
 	}
 	key := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, key); err != nil {
@@ -54,8 +117,26 @@ func loadOrCreateLocalVaultKey(vaultDir string) ([]byte, error) {
 		_ = os.Remove(tmpPath)
 		return nil, err
 	}
-	_ = tmp.Sync()
-	_ = tmp.Close()
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return nil, err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return nil, err
+	}
+	// Recheck before rename to avoid replacing a key created concurrently.
+	if raw, readErr := os.ReadFile(keyPath); readErr == nil {
+		_ = os.Remove(tmpPath)
+		if len(raw) != 32 {
+			return nil, errors.New("некорректный ключ защищённого хранилища")
+		}
+		return raw, nil
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		_ = os.Remove(tmpPath)
+		return nil, readErr
+	}
 	if err := os.Rename(tmpPath, keyPath); err != nil {
 		_ = os.Remove(tmpPath)
 		return nil, err

@@ -290,6 +290,12 @@ export const api = {
     return reqJSON<DesktopIndexStatus>("/api/index/status");
   },
 
+  triggerIndexSync(full = false): Promise<{ ok: boolean; started: boolean; status: DesktopIndexStatus }> {
+    const b = getWailsBridge();
+    if (b) return b.TriggerIndexSync(full);
+    return reqJSON("/api/index/sync", { method: "POST", body: JSON.stringify({ full }) });
+  },
+
   getMcVersions(): Promise<{ ok: true; versions: string[]; by_loader: Record<string, string[]> }> {
     return swrCache.dedupe(
       "mc_versions",
@@ -1130,6 +1136,14 @@ export const api = {
     const b = getWailsBridge();
     if (b) return b.ExportInstanceWorld(id, folder);
     const r = await reqJSON<{ ok: true; export: ExportWorldResult }>("/api/instances/worlds/export", { method: "POST", body: JSON.stringify({ id, folder }) });
+    if (r.export.download_url) {
+      const link = document.createElement("a");
+      link.href = r.export.download_url;
+      link.download = r.export.filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    }
     return r.export;
   },
 
@@ -1425,6 +1439,18 @@ export const api = {
     return reqJSON<ImportPreview>("/api/modpacks/preview-import", { method: "POST", body: JSON.stringify(req) });
   },
 
+  async uploadModpackArchive(file: File): Promise<ImportPreview> {
+    if (getWailsBridge()) throw new Error("Archive upload is available in web mode only");
+    const form = new FormData();
+    form.append("archive", file);
+    const res = await fetch("/api/modpacks/upload-import", { method: "POST", body: form });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: string };
+      throw new Error(body.error || `Upload failed (${res.status})`);
+    }
+    return res.json() as Promise<ImportPreview>;
+  },
+
   async executeModpackImport(req: ExecuteImportInput): Promise<void> {
     const b = getWailsBridge();
     if (b) { await b.ExecuteModpackImport(req); return; }
@@ -1441,7 +1467,16 @@ export const api = {
   async exportModpack(req: ExportModpackInput): Promise<ExportModpackResult> {
     const b = getWailsBridge();
     if (b) return b.ExportModpack(req);
-    return reqJSON<ExportModpackResult>("/api/modpacks/export", { method: "POST", body: JSON.stringify(req) });
+    const result = await reqJSON<ExportModpackResult>("/api/modpacks/export", { method: "POST", body: JSON.stringify(req) });
+    if (result.download_url) {
+      const link = document.createElement("a");
+      link.href = result.download_url;
+      link.download = result.output_path?.split(/[\\/]/).pop() || "modhub-pack.zip";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    }
+    return result;
   },
 
   async previewModpackUpdate(modpackId: string, newArchivePath = ""): Promise<UpdateDiffPreview> {
