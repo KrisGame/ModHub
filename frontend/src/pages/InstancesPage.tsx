@@ -6,6 +6,7 @@ import { INSTANCE_ICON_PRESETS, InstanceIcon } from "../components/InstanceIcon"
 import { InstanceConsoleTab, processStateMeta } from "../components/InstanceConsoleTab";
 import { CreateInstanceModal, DeleteInstanceModal, DuplicateInstanceModal } from "../components/InstanceModals";
 import { ImportModpackModal } from "../components/ImportModpackModal";
+import { ExportModpackModal } from "../components/ExportModpackModal";
 import { JavaSettingsSection } from "../components/JavaSettingsSection";
 import { isSessionActive } from "../hooks/useLauncher";
 import { desktopBridge, subscribeBackendEvents } from "../services/bridge";
@@ -210,6 +211,10 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
   // Modals state
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [exportTarget, setExportTarget] = useState<GameInstance | null>(null);
+  useEffect(() => {
+    setExportTarget((target) => target?.id === selectedId ? target : null);
+  }, [selectedId]);
   const [dupTarget, setDupTarget] = useState<GameInstance | null>(null);
   const [delTarget, setDelTarget] = useState<GameInstance | null>(null);
 
@@ -977,6 +982,9 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
                 {repairing ? "Восстановление…" : "Восстановить"}
               </button>
             )}
+            <button type="button" className="btn btn-secondary btn-xs" onClick={() => setExportTarget(selected)}>
+              Экспорт сборки
+            </button>
             <button
               type="button"
               className={`btn btn-ghost btn-xs${verifying ? " is-loading" : ""}`}
@@ -1735,6 +1743,9 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
           onDelete={onDelete}
           onToast={onToast}
         />
+        {exportTarget?.id === selected.id && (
+          <ExportModpackModal instance={exportTarget} onClose={() => setExportTarget(null)} onToast={onToast} />
+        )}
       </div>
     );
   }
