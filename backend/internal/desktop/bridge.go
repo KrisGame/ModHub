@@ -610,7 +610,7 @@ func (b *Bridge) DeleteInstance(req instances.DeleteInstanceRequest) error {
 }
 
 func (b *Bridge) VerifyInstance(id string) (instances.IntegrityReport, error) {
-	return b.container.Instances.Verify(id)
+	return b.container.CheckAndRepairInstance(id)
 }
 
 func (b *Bridge) RepairInstance(id string) (instances.IntegrityReport, error) {

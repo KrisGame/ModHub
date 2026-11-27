@@ -133,9 +133,44 @@ func NewContainer(dataDir string, db *storage.Database) *Container {
 	c.Accounts = accounts.NewManager(vaultDir, db, bus, func() string { return c.GetConfig().MicrosoftClientID }, nil)
 	c.Launcher = launcher.NewManager(sharedDir, c.Instances, c.MCVersions, c.Modloaders, javaMgr, c.Accounts, db, bus)
 	c.Modpacks = modpacks.NewManager(filepath.Join(dataDir, "modpacks_cache"), httpClient, dlMgr, c.Instances, c.Modloaders, db, bus, func() string { return c.GetConfig().CurseForgeAPIKey }, c.GetPacks)
+	// Local-only discovery runs once for desktop and web, without delaying startup.
+	c.bgWg.Add(1)
+	go func() {
+		defer c.bgWg.Done()
+		c.Java.ScanInstalled(c.bgCtx)
+	}()
 	netx.SetManualProxyURL(c.cfg.ProxyURL)
 	c.indexVersion.Store(1)
 	return c
+}
+
+// CheckAndRepairInstance verifies then restores safe missing profile structure and
+// known managed modpack files. Unrepairable components remain visible in the report.
+func (c *Container) CheckAndRepairInstance(id string) (instances.IntegrityReport, error) {
+	rep, err := c.Instances.Verify(id)
+	if err != nil {
+		return rep, err
+	}
+	if rep.Status == instances.StatusCorrupted {
+		rep, err = c.Instances.RepairMissingStructure(id)
+		if err != nil {
+			return rep, err
+		}
+	}
+	if err := c.Instances.AcquireBusyExclusive(id); err != nil {
+		return rep, err
+	}
+	defer c.Instances.ReleaseBusy(id)
+	issues := c.Modpacks.RepairMissing(c.bgCtx, id)
+	rep, err = c.Instances.Verify(id)
+	if err != nil {
+		return rep, err
+	}
+	rep.Issues = append(rep.Issues, issues...)
+	if len(issues) > 0 && rep.Status == instances.StatusReady {
+		rep.Status = instances.StatusNeedsSetup
+	}
+	return rep, nil
 }
 
 func (c *Container) Close() {

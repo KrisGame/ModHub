@@ -847,7 +847,7 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
     setVerifying(true);
     try {
       const rep = await onVerify(id);
-      onToast(`Проверка завершена: ${statusBadge(rep.status).label}`, rep.status === "corrupted" ? "err" : "ok");
+      onToast(`Проверка и восстановление завершены: ${statusBadge(rep.status).label}${rep.issues.length ? ` (нерешённых проблем: ${rep.issues.length})` : ""}`, rep.status === "ready" ? "ok" : "err");
     } catch (err) {
       onToast(`Ошибка проверки: ${(err as Error).message}`, "err");
     } finally {

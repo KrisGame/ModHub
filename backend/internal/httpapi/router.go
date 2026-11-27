@@ -1009,7 +1009,7 @@ func (s *Server) handleVerifyInstance(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSONBody(w, r, &body, false) {
 		return
 	}
-	rep, err := s.container.Instances.Verify(body.ID)
+	rep, err := s.container.CheckAndRepairInstance(body.ID)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

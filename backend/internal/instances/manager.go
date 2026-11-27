@@ -135,6 +135,20 @@ func (m *Manager) AcquireBusy(id string) error {
 	return nil
 }
 
+// AcquireBusyExclusive rejects simultaneous repairs, launches, and other profile operations.
+func (m *Manager) AcquireBusyExclusive(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.items[id]; !ok {
+		return ErrInstanceNotFound
+	}
+	if m.busy[id] > 0 {
+		return ErrInstanceBusy
+	}
+	m.busy[id] = 1
+	return nil
+}
+
 func (m *Manager) ReleaseBusy(id string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -896,6 +910,45 @@ func (m *Manager) Repair(id string) (IntegrityReport, error) {
 		return IntegrityReport{}, err
 	}
 	if err := m.writeInstanceManifest(&cp); err != nil {
+		return IntegrityReport{}, err
+	}
+	return m.Verify(id)
+}
+
+// RepairMissingStructure only creates missing directories and metadata; it never
+// replaces an existing (possibly user-edited) manifest or file.
+func (m *Manager) RepairMissingStructure(id string) (IntegrityReport, error) {
+	if err := m.AcquireBusyExclusive(id); err != nil {
+		return IntegrityReport{}, err
+	}
+	defer m.ReleaseBusy(id)
+	inst, err := m.Get(id)
+	if err != nil {
+		return IntegrityReport{}, err
+	}
+	// Refuse to traverse substituted profile directories.
+	dirs := []string{inst.RootDir, inst.GameDir}
+	for _, sub := range ExpectedGameSubdirs {
+		dirs = append(dirs, filepath.Join(inst.GameDir, sub))
+	}
+	for _, dir := range dirs {
+		if info, statErr := os.Lstat(dir); statErr == nil {
+			if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				return IntegrityReport{}, fmt.Errorf("путь профиля содержит ссылку или файл: %s", dir)
+			}
+		} else if !os.IsNotExist(statErr) {
+			return IntegrityReport{}, statErr
+		}
+	}
+	if err := m.createProfileDirectoryStructure(inst.RootDir, inst.GameDir); err != nil {
+		return IntegrityReport{}, err
+	}
+	manifest := filepath.Join(inst.RootDir, "instance.json")
+	if _, err := os.Lstat(manifest); os.IsNotExist(err) {
+		if err := m.writeInstanceManifest(&inst); err != nil {
+			return IntegrityReport{}, err
+		}
+	} else if err != nil {
 		return IntegrityReport{}, err
 	}
 	return m.Verify(id)
